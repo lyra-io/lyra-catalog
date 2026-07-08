@@ -1,11 +1,11 @@
-use chronicle_cli::module::{ModuleAction, ModuleKind};
-use chronicle_cli::sql::SqlArgs;
-use chronicle_cli::unit::UnitAction;
-use chronicle_cli::verify::VerifyArgs;
 use clap::Parser;
+use lyra_cli::module::{ModuleAction, ModuleKind};
+use lyra_cli::sql::SqlArgs;
+use lyra_cli::unit::UnitAction;
+use lyra_cli::verify::VerifyArgs;
 
 #[derive(Parser)]
-#[command(name = "chronicle", about = "Chronicle event streaming CLI")]
+#[command(name = "lyra", about = "Lyra event streaming CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -42,14 +42,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Unit { action } => chronicle_cli::unit::run(action).await?,
-        Commands::Catalog { action } => {
-            chronicle_cli::module::run(ModuleKind::Catalog, action).await?
-        }
-        Commands::Sink { action } => chronicle_cli::module::run(ModuleKind::Sink, action).await?,
-        Commands::Xunit { action } => chronicle_cli::module::run(ModuleKind::Xunit, action).await?,
-        Commands::Lens { action } => chronicle_cli::module::run(ModuleKind::Lens, action).await?,
-        Commands::Sql(args) => chronicle_cli::sql::run(args).await?,
+        Commands::Unit { action } => lyra_cli::unit::run(action).await?,
+        Commands::Catalog { action } => lyra_cli::module::run(ModuleKind::Catalog, action).await?,
+        Commands::Sink { action } => lyra_cli::module::run(ModuleKind::Sink, action).await?,
+        Commands::Xunit { action } => lyra_cli::module::run(ModuleKind::Xunit, action).await?,
+        Commands::Lens { action } => lyra_cli::module::run(ModuleKind::Lens, action).await?,
+        Commands::Sql(args) => lyra_cli::sql::run(args).await?,
         Commands::Verify(args) => {
             tracing_subscriber::fmt()
                 .with_env_filter(
@@ -61,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_thread_names(false)
                 .compact()
                 .init();
-            chronicle_cli::verify::run(args).await?;
+            lyra_cli::verify::run(args).await?;
         }
     }
 

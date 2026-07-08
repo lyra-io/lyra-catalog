@@ -1,7 +1,7 @@
 use futures_util::StreamExt;
-use libchronicle::TimelineOptions;
-use libchronicle::chronicle::{Chronicle, ChronicleOptions};
-use libchronicle::{Event, FetchOptions};
+use liblyra::TimelineOptions;
+use liblyra::lyra::{Lyra, LyraOptions};
+use liblyra::{Event, FetchOptions};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -204,7 +204,7 @@ pub async fn run(args: VerifyArgs) -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => warn!(error = %e, "failed to list timelines from catalog (non-fatal)"),
     }
 
-    let chronicle = Arc::new(Chronicle::new(catalog, ChronicleOptions::new()));
+    let lyra = Arc::new(Lyra::new(catalog, LyraOptions::new()));
 
     info!(
         timelines = args.timelines,
@@ -227,7 +227,7 @@ pub async fn run(args: VerifyArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut timelines = Vec::new();
     for i in 0..args.timelines {
         let name = format!("verify-{}", i);
-        let timeline = match chronicle
+        let timeline = match lyra
             .open_timeline(
                 &name,
                 TimelineOptions::new()
@@ -240,7 +240,7 @@ pub async fn run(args: VerifyArgs) -> Result<(), Box<dyn std::error::Error>> {
             Ok(t) => t,
             Err(create_err) => {
                 info!(timeline = name, error = %create_err, "create failed, trying open");
-                match chronicle
+                match lyra
                     .open_timeline(
                         &name,
                         TimelineOptions::new()
@@ -311,7 +311,7 @@ pub async fn run(args: VerifyArgs) -> Result<(), Box<dyn std::error::Error>> {
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     for (i, verifier) in verifiers.iter().enumerate().take(args.timelines) {
-        let chronicle = chronicle.clone();
+        let lyra = lyra.clone();
         let stats = stats.clone();
         let reading = reading.clone();
         let verifier = verifier.clone();
@@ -321,7 +321,7 @@ pub async fn run(args: VerifyArgs) -> Result<(), Box<dyn std::error::Error>> {
             let name = format!("verify-{}", i);
 
             let mut stream = loop {
-                match chronicle
+                match lyra
                     .open_timeline(
                         &name,
                         TimelineOptions::new()

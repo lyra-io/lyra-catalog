@@ -1,12 +1,12 @@
 use crate::banner;
 use crate::process;
-use chronicle_unit::option::unit_options::UnitOptions;
-use chronicle_unit::unit::Unit;
+use lyra_unit::option::unit_options::UnitOptions;
+use lyra_unit::unit::Unit;
 use std::io::IsTerminal;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-const DEFAULT_PID_FILE: &str = "chronicle-unit.pid";
+const DEFAULT_PID_FILE: &str = "lyra-unit.pid";
 
 #[derive(clap::Subcommand)]
 pub enum UnitAction {

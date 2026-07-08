@@ -12,7 +12,7 @@ use tonic::transport::{Channel, Endpoint};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-const DEFAULT_CONFIG_PATH: &str = "/etc/chronicle/chronicled.toml";
+const DEFAULT_CONFIG_PATH: &str = "/etc/lyra/lyrad.toml";
 
 #[derive(Debug, Args)]
 pub struct SqlArgs {
@@ -57,7 +57,7 @@ async fn repl(
     let mut line = String::new();
 
     loop {
-        print!("chronicle> ");
+        print!("lyra> ");
         io::stdout().flush()?;
 
         line.clear();
@@ -239,7 +239,7 @@ fn resolve_config_path(path: Option<&str>) -> Option<String> {
     if let Some(path) = path {
         return Some(path.to_string());
     }
-    if let Ok(path) = std::env::var("CHRONICLE_CONFIG")
+    if let Ok(path) = std::env::var("LYRA_CONFIG")
         && !path.trim().is_empty()
     {
         return Some(path);

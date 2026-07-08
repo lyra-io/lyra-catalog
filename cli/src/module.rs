@@ -1,8 +1,8 @@
 use crate::banner;
 use crate::process;
 use catalog::{CatalogOptions, build_catalog};
-use chronicle_sink::{Sink, SinkOptions};
-use chronicle_xunit::Xunit;
+use lyra_sink::{Sink, SinkOptions};
+use lyra_xunit::Xunit;
 use serde::Deserialize;
 use std::io::IsTerminal;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -10,7 +10,7 @@ use std::path::Path;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-const DEFAULT_CONFIG_PATH: &str = "/etc/chronicle/chronicled.toml";
+const DEFAULT_CONFIG_PATH: &str = "/etc/lyra/lyrad.toml";
 
 #[derive(Clone, Copy)]
 pub enum ModuleKind {
@@ -40,7 +40,7 @@ impl ModuleKind {
     }
 
     fn default_pid_file(self) -> String {
-        format!("chronicle-{}.pid", self.command_name())
+        format!("lyra-{}.pid", self.command_name())
     }
 }
 
@@ -85,8 +85,8 @@ pub async fn run(kind: ModuleKind, action: ModuleAction) -> Result<(), Box<dyn s
                 }
                 ModuleKind::Lens => {
                     wait_for_shutdown_after_start = false;
-                    let lens = chronicle_lens::Lens::new(catalog);
-                    chronicle_lens::flight_sql::serve_with_shutdown(
+                    let lens = lyra_lens::Lens::new(catalog);
+                    lyra_lens::flight_sql::serve_with_shutdown(
                         lens,
                         config.lens.bind_address,
                         process::wait_for_shutdown(),
@@ -177,7 +177,7 @@ fn resolve_config_path(path: Option<&str>) -> Option<String> {
     if let Some(path) = path {
         return Some(path.to_string());
     }
-    if let Ok(path) = std::env::var("CHRONICLE_CONFIG")
+    if let Ok(path) = std::env::var("LYRA_CONFIG")
         && !path.trim().is_empty()
     {
         return Some(path);

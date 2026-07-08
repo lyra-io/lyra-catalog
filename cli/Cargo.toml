@@ -1,20 +1,20 @@
 [package]
-name = "chronicle-cli"
+name = "lyra-cli"
 version = "0.1.0"
 edition = "2024"
 resolver = "3"
 
 [[bin]]
-name = "chronicle"
+name = "lyra"
 path = "src/main.rs"
 
 [dependencies]
-libchronicle = { path = "../libchronicle" }
+liblyra = { path = "../liblyra" }
 libxunit = { path = "../libxunit" }
-chronicle-unit = { path = "../../chronicled/unit" }
-chronicle-sink = { path = "../../chronicled/sink" }
-chronicle-xunit = { path = "../../chronicled/xunit" }
-chronicle-lens = { path = "../../chronicled/lens" }
+lyra-unit = { path = "../../lyrad/unit" }
+lyra-sink = { path = "../../lyrad/sink" }
+lyra-xunit = { path = "../../lyrad/xunit" }
+lyra-lens = { path = "../../lyrad/lens" }
 catalog = { path = "../../catalog" }
 arrow-array = { workspace = true }
 arrow-flight = { workspace = true }
