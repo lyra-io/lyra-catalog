@@ -1,5 +1,4 @@
-//! Stateless tiered storage for Lyra.
+//! Query and cluster control plane for Lyra.
 //!
-//! This crate is the boundary for future request-scoped operations over
-//! immutable local and remote data. The existing stateful storage logic lives
-//! in `stream` and is intentionally not shared with this crate.
+//! Cata parses and plans queries, maintains the cluster view through Oxia,
+//! and distributes execution tasks to Func runtimes.
