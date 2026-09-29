@@ -8,6 +8,7 @@ COPY cli cli
 # Moderate optimization keeps local kind/CI builds practical for DataFusion.
 ENV CARGO_PROFILE_RELEASE_OPT_LEVEL=1 CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256 CARGO_PROFILE_RELEASE_DEBUG=0
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git --mount=type=cache,target=/src/target \
+    cargo clean --release -p lyra-catalog -p lyra-catalog-cli && \
     cargo build --locked --release -p lyra-catalog-cli && install -m 0755 target/release/lyra-catalog /usr/local/bin/lyra-catalog
 
 FROM debian:bookworm-slim
