@@ -1,10 +1,9 @@
 use clap::Parser;
-use lyra_cli::cata::CataArgs;
-use lyra_cli::sql::SqlArgs;
-use lyra_cli::unit::UnitAction;
+use lyra_catalog_cli::serve::ServeArgs;
+use lyra_catalog_cli::sql::SqlArgs;
 
 #[derive(Parser)]
-#[command(name = "lyra", about = "Lyra distributed streaming engine CLI")]
+#[command(name = "lyra-catalog", about = "Lyra catalog: SQL parsing, planning and pgwire")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -12,11 +11,9 @@ struct Cli {
 
 #[derive(clap::Subcommand)]
 enum Commands {
-    Cata(CataArgs),
-    Unit {
-        #[command(subcommand)]
-        action: UnitAction,
-    },
+    /// Start the catalog and serve the PostgreSQL wire protocol.
+    Serve(ServeArgs),
+    /// Interactive SQL shell.
     Sql(SqlArgs),
 }
 
@@ -25,9 +22,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Cata(args) => lyra_cli::cata::run(args).await?,
-        Commands::Unit { action } => lyra_cli::unit::run(action).await?,
-        Commands::Sql(args) => lyra_cli::sql::run(args).await?,
+        Commands::Serve(args) => lyra_catalog_cli::serve::run(args).await?,
+        Commands::Sql(args) => lyra_catalog_cli::sql::run(args).await?,
     }
 
     Ok(())

@@ -1,17 +1,19 @@
 [package]
-name = "cata"
-version = "0.1.0"
-edition = "2024"
-resolver = "3"
+name = "lyra-catalog"
+description = "SQL parsing, planning and the PostgreSQL wire protocol front end for Lyra."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
+lyra-meta = { workspace = true }
 async-trait = { workspace = true }
+dashmap = { workspace = true }
 datafusion = { workspace = true }
 datafusion-pg-catalog = { workspace = true }
 datafusion-postgres = { workspace = true }
-dashmap = { workspace = true }
 futures-util = { workspace = true }
-meta = { path = "../meta" }
 thiserror = { workspace = true }
 
 [dev-dependencies]

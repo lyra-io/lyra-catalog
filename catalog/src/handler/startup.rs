@@ -10,9 +10,9 @@ use datafusion_postgres::pgwire::api::auth::sasl::scram::{
 };
 use datafusion_postgres::pgwire::api::auth::{AuthSource, LoginInfo, Password};
 use datafusion_postgres::pgwire::error::{PgWireError, PgWireResult};
-use meta::auth::{AuthenticationError, BasicAuthenticationProvider};
-use meta::metadata::{DEFAULT_DATABASE_NAME, DEFAULT_SCHEMA_NAME, Metadata};
-use meta::utils::scram::SCRAM_ITERATIONS;
+use lyra_meta::auth::{AuthenticationError, BasicAuthenticationProvider};
+use lyra_meta::metadata::{DEFAULT_DATABASE_NAME, DEFAULT_SCHEMA_NAME, Metadata};
+use lyra_meta::utils::scram::SCRAM_ITERATIONS;
 use std::fmt;
 use std::sync::Arc;
 
@@ -137,9 +137,9 @@ impl AuthSource for MetadataPasswordSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use meta::metadata::{MemoryMetadata, MetadataPutCondition};
-    use meta::proto::pb_catalog::{Database, Schema, User};
-    use meta::utils::scram::make_scram_value;
+    use lyra_meta::metadata::{MemoryMetadata, MetadataPutCondition};
+    use lyra_meta::proto::pb_catalog::{Database, Schema, User};
+    use lyra_meta::utils::scram::make_scram_value;
 
     #[tokio::test]
     async fn reads_scram_credentials_for_valid_logins() {

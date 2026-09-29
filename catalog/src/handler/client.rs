@@ -1,5 +1,5 @@
 use datafusion_postgres::pgwire::api::{ClientInfo, METADATA_DATABASE, METADATA_USER};
-use meta::metadata::{DEFAULT_DATABASE_NAME, DEFAULT_SCHEMA_NAME};
+use lyra_meta::metadata::{DEFAULT_DATABASE_NAME, DEFAULT_SCHEMA_NAME};
 
 pub(crate) fn client_database<C>(client: &C) -> &str
 where

@@ -1,8 +1,8 @@
 use super::matches_like;
 use crate::sql::{AlterSchema, CreateSchema, DropSchema, ShowSchemas};
 use crate::{CataError, Result};
-use meta::metadata::{Metadata, MetadataError, MetadataPutCondition};
-use meta::proto::pb_catalog::Schema;
+use lyra_meta::metadata::{Metadata, MetadataError, MetadataPutCondition};
+use lyra_meta::proto::pb_catalog::Schema;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

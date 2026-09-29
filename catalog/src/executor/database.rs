@@ -2,10 +2,10 @@ use super::{matches_like, schema_is_empty};
 use crate::handler::DatabaseHandles;
 use crate::sql::{AlterDatabase, CreateDatabase, DropDatabase, ShowDatabases};
 use crate::{CataError, Result};
-use meta::metadata::{
+use lyra_meta::metadata::{
     DEFAULT_DATABASE_NAME, DEFAULT_SCHEMA_NAME, Metadata, MetadataError, MetadataPutCondition,
 };
-use meta::proto::pb_catalog::{Database, Schema};
+use lyra_meta::proto::pb_catalog::{Database, Schema};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

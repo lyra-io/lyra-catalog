@@ -1,10 +1,10 @@
 use super::matches_like;
 use crate::sql::{AlterSecret, CreateSecret, DropSecret, SecretName, ShowSecrets};
 use crate::{CataError, Result};
-use meta::metadata::{
+use lyra_meta::metadata::{
     DEFAULT_SCHEMA_NAME, Metadata, MetadataError, MetadataPutCondition, MetadataRecord,
 };
-use meta::proto::pb_catalog::Secret;
+use lyra_meta::proto::pb_catalog::Secret;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

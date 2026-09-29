@@ -8,7 +8,7 @@ use datafusion::logical_expr::{Expr, TableType};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::SessionContext;
 use datafusion_pg_catalog::pg_catalog::context::{PgCatalogContextProvider, Role};
-use meta::metadata::Metadata;
+use lyra_meta::metadata::Metadata;
 use std::fmt;
 use std::sync::Arc;
 

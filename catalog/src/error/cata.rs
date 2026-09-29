@@ -1,6 +1,6 @@
 use datafusion::error::DataFusionError;
 use datafusion::sql::sqlparser::parser::ParserError;
-use meta::metadata::MetadataError;
+use lyra_meta::metadata::MetadataError;
 use std::io;
 use thiserror::Error;
 

@@ -2,7 +2,7 @@ use crate::Result;
 use crate::sql::SqlPlanner;
 use dashmap::DashMap;
 use datafusion_postgres::DfSessionService;
-use meta::metadata::{DEFAULT_DATABASE_NAME, Metadata};
+use lyra_meta::metadata::{DEFAULT_DATABASE_NAME, Metadata};
 use std::sync::Arc;
 
 pub(crate) struct DatabaseHandles {

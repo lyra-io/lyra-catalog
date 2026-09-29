@@ -1,9 +1,9 @@
 use super::matches_like;
 use crate::sql::{AlterUser, AlterUserAction, CreateUser, DropUser, SecretName, ShowUsers, Value};
 use crate::{CataError, Result};
-use meta::metadata::{Metadata, MetadataError, MetadataPutCondition};
-use meta::proto::pb_catalog::{User, Value as MetadataValue, value};
-use meta::utils::scram::make_scram;
+use lyra_meta::metadata::{Metadata, MetadataError, MetadataPutCondition};
+use lyra_meta::proto::pb_catalog::{User, Value as MetadataValue, value};
+use lyra_meta::utils::scram::make_scram;
 use std::str;
 use std::sync::Arc;
 
@@ -220,9 +220,9 @@ impl UserExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use meta::metadata::{DEFAULT_DATABASE_NAME, DEFAULT_SCHEMA_NAME, MemoryMetadata};
-    use meta::proto::pb_catalog::{Schema, Secret};
-    use meta::utils::scram::{as_scram, verify_scram};
+    use lyra_meta::metadata::{DEFAULT_DATABASE_NAME, DEFAULT_SCHEMA_NAME, MemoryMetadata};
+    use lyra_meta::proto::pb_catalog::{Schema, Secret};
+    use lyra_meta::utils::scram::{as_scram, verify_scram};
 
     async fn metadata0() -> Arc<MemoryMetadata> {
         let metadata = Arc::new(MemoryMetadata::new());

@@ -1,6 +1,6 @@
-use cata::Cata;
-use cata::options::CataOptions;
-use meta::metadata::MemoryMetadata;
+use lyra_catalog::Cata;
+use lyra_catalog::options::CataOptions;
+use lyra_meta::metadata::MemoryMetadata;
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Duration;

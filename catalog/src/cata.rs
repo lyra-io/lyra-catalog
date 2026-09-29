@@ -7,12 +7,12 @@ use datafusion_postgres::pgwire::api::auth::StartupHandler as PgWireStartupHandl
 use datafusion_postgres::pgwire::api::cancel::{CancelHandler, DefaultCancelHandler};
 use datafusion_postgres::pgwire::api::query::{ExtendedQueryHandler, SimpleQueryHandler};
 use datafusion_postgres::{ServerOptions, serve_with_handlers};
-use meta::auth::BasicAuthenticationProvider;
-use meta::metadata::{
+use lyra_meta::auth::BasicAuthenticationProvider;
+use lyra_meta::metadata::{
     DEFAULT_DATABASE_NAME, DEFAULT_SCHEMA_NAME, Metadata, MetadataError, MetadataPutCondition,
 };
-use meta::proto::pb_catalog::{Database, Schema, User};
-use meta::utils::scram::make_scram_value;
+use lyra_meta::proto::pb_catalog::{Database, Schema, User};
+use lyra_meta::utils::scram::make_scram_value;
 use std::sync::Arc;
 
 pub struct Cata {
@@ -152,7 +152,7 @@ impl PgWireServerHandlers for Cata {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use meta::metadata::MemoryMetadata;
+    use lyra_meta::metadata::MemoryMetadata;
 
     #[tokio::test]
     async fn bootstraps_the_user_and_default_catalog() {

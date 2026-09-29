@@ -1,14 +1,14 @@
-use cata::Cata;
-use cata::options::CataOptions;
+use lyra_catalog::Cata;
+use lyra_catalog::options::CataOptions;
 use clap::Args;
-use meta::metadata::oxia::{OxiaMetadata, OxiaOptions};
+use lyra_meta::metadata::oxia::{OxiaMetadata, OxiaOptions};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::info;
 
 #[derive(Debug, Args)]
-pub struct CataArgs {
+pub struct ServeArgs {
     /// Path to the lyrad configuration file.
     #[arg(short, long, value_name = "FILE")]
     pub config: PathBuf,
@@ -38,7 +38,7 @@ struct CataProcessOptions {
     bootstrap_password: Option<String>,
 }
 
-pub async fn run(args: CataArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let _ = tracing_subscriber::fmt().with_target(false).try_init();
 
     let options = read_options(&args.config)?;
@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn parses_the_lyrad_options_file() {
-        let options: LyradOptions = toml::from_str(include_str!("../../../options/lyrad.toml"))
+        let options: LyradOptions = toml::from_str(include_str!("../../options/lyra-catalog.toml"))
             .expect("lyrad options should parse");
 
         assert_eq!(options.meta.namespace, "default");

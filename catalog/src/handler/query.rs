@@ -9,7 +9,7 @@ use datafusion_postgres::pgwire::api::portal::Format;
 use datafusion_postgres::pgwire::api::results::{DataRowEncoder, QueryResponse, Response, Tag};
 use datafusion_postgres::pgwire::error::PgWireResult;
 use futures_util::stream;
-use meta::metadata::Metadata;
+use lyra_meta::metadata::Metadata;
 use std::sync::Arc;
 
 pub(crate) struct QueryHandler {

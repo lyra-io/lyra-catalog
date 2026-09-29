@@ -1,5 +1,5 @@
 use super::SecretName;
-use meta::proto::pb_catalog::Scram;
+use lyra_meta::proto::pb_catalog::Scram;
 use std::fmt;
 
 #[derive(Clone, PartialEq, Eq)]

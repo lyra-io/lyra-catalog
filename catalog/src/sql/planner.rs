@@ -2,7 +2,7 @@ use crate::Result;
 use crate::sql::{CatalogContextProvider, register_rw_catalog};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pg_catalog::setup_pg_catalog;
-use meta::metadata::Metadata;
+use lyra_meta::metadata::Metadata;
 use std::sync::Arc;
 
 const SCHEMA_NAME: &str = "public";
@@ -37,8 +37,8 @@ impl SqlPlanner {
 mod tests {
     use super::*;
     use datafusion::arrow::array::StringArray;
-    use meta::metadata::{MemoryMetadata, MetadataPutCondition};
-    use meta::proto::pb_catalog::User;
+    use lyra_meta::metadata::{MemoryMetadata, MetadataPutCondition};
+    use lyra_meta::proto::pb_catalog::User;
 
     #[tokio::test]
     async fn configures_the_current_database() {

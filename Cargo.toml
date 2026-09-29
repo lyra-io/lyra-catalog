@@ -1,0 +1,31 @@
+[workspace]
+resolver = "3"
+members = ["catalog", "cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/lyra-io/lyra-catalog"
+
+[workspace.dependencies]
+lyra-meta = { git = "https://github.com/lyra-io/lyra-meta", branch = "main" }
+arrow-array = "56.0.0"
+arrow-flight = { version = "56.0.0", features = ["flight-sql"] }
+arrow-schema = "56.0.0"
+async-trait = "0.1"
+clap = { version = "4.5", features = ["derive"] }
+dashmap = "6.1"
+datafusion = "54"
+datafusion-pg-catalog = "0.18"
+datafusion-postgres = "0.18"
+futures-util = "0.3"
+libc = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+tokio = { version = "1.47", features = ["full"] }
+tokio-postgres = "0.7"
+toml = "0.9"
+tonic = "0.13"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
