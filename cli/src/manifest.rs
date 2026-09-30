@@ -10,7 +10,6 @@ use url::Url;
 pub struct Manifest {
     pub metadata: Metadata,
     pub postgres: Postgres,
-    pub observability: Option<Observability>,
     pub health: Option<Health>,
 }
 #[derive(Deserialize)]
@@ -34,12 +33,6 @@ pub struct Postgres {
 pub struct Health {
     pub listen: SocketAddr,
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Observability {
-    pub otlp_endpoint: String,
-}
-
 impl Manifest {
     pub fn read(path: &Path) -> Result<Self, &'static str> {
         let mut input = String::new();
@@ -91,25 +84,6 @@ impl Manifest {
         {
             return Err("listener ports must be nonzero and distinct");
         }
-        if let Some(observability) = &manifest.observability {
-            let endpoint =
-                Url::parse(&observability.otlp_endpoint).map_err(|_| "invalid OTLP endpoint")?;
-            if endpoint.scheme() != "http"
-                || endpoint.host_str().is_none()
-                || observability
-                    .otlp_endpoint
-                    .rsplit_once(':')
-                    .and_then(|(_, port)| port.parse::<u16>().ok())
-                    .is_none_or(|p| p == 0)
-                || endpoint.path() != "/"
-                || endpoint.query().is_some()
-                || endpoint.fragment().is_some()
-                || !endpoint.username().is_empty()
-                || endpoint.password().is_some()
-            {
-                return Err("OTLP endpoint must be an http://host:port local Collector address");
-            }
-        }
         Ok(manifest)
     }
 }
@@ -124,6 +98,12 @@ mod tests {
         assert!(Manifest::parse(&MINIMAL.replace("localhost:6648", "localhost:80")).is_ok());
         assert!(Manifest::parse(&MINIMAL.replace("localhost:6648", "localhost")).is_err());
         assert!(Manifest::parse(&format!("{MINIMAL}password: forbidden\n")).is_err());
+        assert!(
+            Manifest::parse(&format!(
+                "{MINIMAL}observability:\n  otlp_endpoint: http://localhost:4317\n"
+            ))
+            .is_err()
+        );
         assert!(
             Manifest::parse(&MINIMAL.replace("localhost:6648", "user:password@localhost:6648"))
                 .is_err()

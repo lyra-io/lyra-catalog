@@ -4,9 +4,6 @@ metadata:
     namespace: "default"
 postgres:
   listen: "127.0.0.1:5432"
-# Optional; omit when no Collector is running.
-observability:
-  otlp_endpoint: "http://127.0.0.1:4317"
-# Optional deployment probes; never a discovery endpoint.
+# Optional /metrics, /live and /ready listener; never a discovery endpoint.
 health:
   listen: "127.0.0.1:8080"

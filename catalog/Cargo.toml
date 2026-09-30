@@ -19,7 +19,7 @@ tokio = { workspace = true }
 tokio-util = { version = "0.7", features = ["codec", "rt"] }
 bytes = "1"
 tracing = { workspace = true }
-opentelemetry = { version = "0.31", default-features = false, features = ["metrics"] }
+opentelemetry = { version = "0.32", default-features = false, features = ["metrics"] }
 rsasl = { version = "=2.3.1", default-features = false, features = ["provider", "config_builder", "scram-sha-2"] }
 
 [dev-dependencies]

@@ -23,10 +23,13 @@ tracing-appender = "0.2"
 serde_yaml_ng = "=0.10.0"
 url = "2"
 zeroize = "1.8"
-opentelemetry = { version = "0.31", features = ["metrics", "logs"] }
-opentelemetry_sdk = { version = "0.31", features = ["metrics", "logs"] }
-opentelemetry-otlp = { version = "=0.31.0", default-features = false, features = ["grpc-tonic", "metrics", "logs"] }
-opentelemetry-appender-tracing = "=0.31.1"
+opentelemetry = { version = "0.32", default-features = false, features = ["metrics"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["metrics"] }
+opentelemetry-prometheus = "=0.32.0"
+prometheus = { version = "0.14", default-features = false }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 
 [dev-dependencies]
 tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

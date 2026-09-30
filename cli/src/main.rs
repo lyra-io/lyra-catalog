@@ -1,6 +1,8 @@
 use clap::{Args, Parser, Subcommand};
 use lyra_catalog::{Cata, options::CataOptions};
-use lyra_catalog_cli::{manifest::Manifest, observability::Telemetry, password::read_verifier};
+use lyra_catalog_cli::{
+    banner, health, manifest::Manifest, observability::Telemetry, password::read_verifier,
+};
 use lyra_meta::metadata::{
     Metadata, MetadataError,
     oxia::{OxiaMetadata, OxiaOptions},
@@ -10,7 +12,6 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::time::timeout;
@@ -73,7 +74,10 @@ async fn run(cli: Cli) -> Result<(), &'static str> {
         Command::Init { password_file, .. } => Some(read_verifier(password_file)?),
         _ => None,
     };
-    let telemetry = Telemetry::new(manifest.observability.as_ref())?;
+    let telemetry = Telemetry::new()?;
+    if matches!(&cli.command, Command::Start(_)) {
+        banner::print_banner();
+    }
     let result = run0(cli.command, manifest, verifier, &telemetry).await;
     if result.is_err() {
         tracing::error!(
@@ -147,24 +151,7 @@ async fn run0(
             });
             let health_task = health.map(|listener| {
                 let catalog = Arc::clone(&catalog);
-                tokio::spawn(async move {
-                    let shutdown = catalog.cancellation();
-                    loop {
-                        let accepted = tokio::select! {
-                            _ = shutdown.cancelled() => break,
-                            accepted = listener.accept() => accepted,
-                        };
-                        let Ok((mut socket, _)) = accepted else { break; };
-                        let mut input = [0; 1024];
-                        let ready = catalog.is_ready();
-                        let _ = timeout(Duration::from_secs(1), async {
-                            let n = socket.read(&mut input).await?;
-                            let request = &input[..n];
-                            let status = if request.starts_with(b"GET /live ") || (request.starts_with(b"GET /ready ") && ready) { "200 OK" } else { "503 Service Unavailable" };
-                            socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).await
-                        }).await;
-                    }
-                })
+                tokio::spawn(health::serve(listener, catalog, telemetry.registry()))
             });
             let result = catalog
                 .start_with_listener(sql)
@@ -172,7 +159,10 @@ async fn run0(
                 .map_err(|_| "catalog server stopped with an error");
             shutdown.cancel();
             signal_task.abort();
-            if let Some(task) = health_task {
+            if let Some(mut task) = health_task
+                && timeout(Duration::from_secs(2), &mut task).await.is_err()
+            {
+                task.abort();
                 let _ = task.await;
             }
             result
