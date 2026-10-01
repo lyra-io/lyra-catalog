@@ -10,7 +10,10 @@ COPY cli cli
 ENV CARGO_PROFILE_RELEASE_OPT_LEVEL=1 CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256 CARGO_PROFILE_RELEASE_DEBUG=1 \
     RUSTFLAGS="--cfg tokio_unstable -C force-frame-pointers=yes"
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git --mount=type=cache,target=/src/target \
-    cargo build --locked --release -p lyra-catalog-cli && install -m 0755 target/release/lyra-catalog /usr/local/bin/lyra-catalog
+    cargo build --locked --release -p lyra-catalog-cli && \
+    install -m 0755 target/release/lyra-catalog /usr/local/bin/lyra-catalog && \
+    strip --strip-debug /usr/local/bin/lyra-catalog
+# Keep the function symbol table for pprof; omit bulky DWARF line information.
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
