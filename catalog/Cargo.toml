@@ -15,6 +15,11 @@ datafusion-pg-catalog = { workspace = true }
 datafusion-postgres = { workspace = true }
 futures-util = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { version = "0.7", features = ["codec", "rt"] }
+bytes = "1"
+tracing = { workspace = true }
+rsasl = { version = "=2.3.1", default-features = false, features = ["provider", "config_builder", "scram-sha-2"] }
 
 [dev-dependencies]
 tokio = { workspace = true }
