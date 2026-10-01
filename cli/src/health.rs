@@ -1,7 +1,7 @@
 use axum::{
     Router,
     extract::State,
-    http::{StatusCode, Uri, header},
+    http::{Method, StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -35,7 +35,10 @@ async fn ready(State(state): State<Health>) -> StatusCode {
         StatusCode::SERVICE_UNAVAILABLE
     }
 }
-async fn profile(State(state): State<Health>, uri: Uri) -> Response {
+async fn profile(State(state): State<Health>, method: Method, uri: Uri) -> Response {
+    if method != Method::GET {
+        return StatusCode::METHOD_NOT_ALLOWED.into_response();
+    }
     match state.profiler.capture(uri.query()).await {
         Ok(body) => (
             [
