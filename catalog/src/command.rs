@@ -42,7 +42,6 @@ pub(crate) struct Options {
 
 #[derive(Clone, Debug)]
 pub(crate) enum Alter {
-    Rename(String),
     Owner(String),
     Options(Options),
     ResetAll,
@@ -192,7 +191,8 @@ impl Tokens {
             let name = self.name()?;
             let action = if self.word("RENAME") {
                 self.expect("TO")?;
-                Alter::Rename(self.name()?)
+                self.name()?;
+                return Err(unsupported());
             } else if self.word("OWNER") {
                 self.expect("TO")?;
                 Alter::Owner(self.name()?)

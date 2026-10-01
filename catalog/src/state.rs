@@ -181,10 +181,6 @@ impl State {
                 let operation = match &command {
                     Command::Create { .. } => "create",
                     Command::Alter {
-                        action: Alter::Rename(_),
-                        ..
-                    } => "rename",
-                    Command::Alter {
                         action: Alter::Owner(_),
                         ..
                     } => "alter_owner",
@@ -277,12 +273,6 @@ impl State {
                 }
                 let mut value = record.value().clone();
                 match action {
-                    Alter::Rename(name) => {
-                        if record.id() == current_database || self.count(record.id()) > 0 {
-                            return Err(CataError::sql("55006", "database is in use"));
-                        }
-                        value.name = name;
-                    }
                     Alter::Owner(name) => {
                         value.owner_user_id = self
                             .metadata

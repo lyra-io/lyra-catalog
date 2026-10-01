@@ -131,7 +131,7 @@ async fn wire_database_contract() {
     assert_eq!(database.value().owner_user_id, owner.id());
     let target = server.connect("test").await.unwrap();
     assert!(server.connect("test").await.is_err());
-    code(&root, "ALTER DATABASE test RENAME TO renamed", "55006").await;
+    code(&root, "ALTER DATABASE test RENAME TO renamed", "0A000").await;
     code(&root, "DROP DATABASE test", "55006").await;
     code(&target, "DROP DATABASE test WITH (FORCE)", "55006").await;
     root.batch_execute("ALTER DATABASE test ALLOW_CONNECTIONS false")
@@ -165,25 +165,35 @@ async fn wire_database_contract() {
         .unwrap()
         .unwrap()
         .id();
-    root.execute("ALTER DATABASE original RENAME TO renamed", &[])
+    code(&root, "ALTER DATABASE original RENAME TO renamed", "0A000").await;
+    let before_rejection = metadata.get_database("original").await.unwrap().unwrap();
+    code(&root, "ALTER DATABASE original RENAME TO public", "0A000").await;
+    let error = root
+        .execute("ALTER DATABASE original RENAME TO renamed", &[])
         .await
-        .unwrap();
+        .unwrap_err();
+    assert_eq!(error.as_db_error().unwrap().code().code(), "0A000");
+    assert!(metadata.get_database("renamed").await.unwrap().is_none());
+    assert_eq!(
+        metadata.get_database("original").await.unwrap().unwrap(),
+        before_rejection
+    );
     assert_eq!(
         metadata
-            .get_database("renamed")
+            .get_database("original")
             .await
             .unwrap()
             .unwrap()
             .id(),
         id
     );
-    assert!(server.connect("original").await.is_err());
-    root.batch_execute("ALTER DATABASE renamed OWNER TO owner")
+    assert!(server.connect("original").await.is_ok());
+    root.batch_execute("ALTER DATABASE original OWNER TO owner")
         .await
         .unwrap();
     assert_eq!(
         metadata
-            .get_database("renamed")
+            .get_database("original")
             .await
             .unwrap()
             .unwrap()
@@ -191,20 +201,20 @@ async fn wire_database_contract() {
             .owner_user_id,
         owner.id()
     );
-    root.batch_execute("ALTER DATABASE renamed RESET ALL")
+    root.batch_execute("ALTER DATABASE original RESET ALL")
         .await
         .unwrap();
     code(
         &root,
-        "ALTER DATABASE renamed SET work_mem = '10MB'",
+        "ALTER DATABASE original SET work_mem = '10MB'",
         "0A000",
     )
     .await;
     code(&root, "CREATE USER ignored", "0A000").await;
     code(&root, "CREATE SCHEMA ignored", "0A000").await;
-    code(&root, "CREATE DATABASE renamed", "42P04").await;
+    code(&root, "CREATE DATABASE original", "42P04").await;
     code(&root, "CREATE DATABASE unknown_owner OWNER absent", "42704").await;
-    root.batch_execute("CREATE DATABASE IF NOT EXISTS renamed; DROP DATABASE IF EXISTS absent")
+    root.batch_execute("CREATE DATABASE IF NOT EXISTS original; DROP DATABASE IF EXISTS absent")
         .await
         .unwrap();
     root.batch_execute("BEGIN").await.unwrap();
@@ -217,16 +227,16 @@ async fn wire_database_contract() {
             .unwrap()
             .is_none()
     );
-    let rows = root.query("SHOW DATABASES LIKE 'ren%'", &[]).await.unwrap();
+    let rows = root.query("SHOW DATABASES LIKE 'ori%'", &[]).await.unwrap();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].get::<_, String>(0), "renamed");
+    assert_eq!(rows[0].get::<_, String>(0), "original");
     code(&root, "DROP DATABASE lyrasys WITH (FORCE)", "42501").await;
-    code(&root, "ALTER DATABASE lyrasys RENAME TO x", "42501").await;
+    code(&root, "ALTER DATABASE lyrasys RENAME TO x", "0A000").await;
     drop(root);
     drop(target);
     server.stop().await;
     let server = Server::new(metadata.clone()).await;
-    let root = server.connect("renamed").await.unwrap();
+    let root = server.connect("original").await.unwrap();
     root.batch_execute("DROP DATABASE public").await.unwrap();
     server.stop().await;
     let server = Server::new(metadata.clone()).await;
