@@ -1,8 +1,8 @@
 use crate::inventory;
+use crate::inventory::SqlSession;
 use crate::state::State;
 use crate::{CataError, Result};
 use async_trait::async_trait;
-use datafusion_postgres::DfSessionService;
 use datafusion_postgres::pgwire::api::auth::{
     DefaultServerParameterProvider, StartupHandler, finish_authentication, protocol_negotiation,
     save_startup_parameters_to_metadata,
@@ -26,7 +26,7 @@ use std::fmt::Debug;
 use std::sync::{Arc, Mutex, OnceLock};
 
 pub(crate) struct Admitted {
-    pub query: Arc<DfSessionService>,
+    pub query: Arc<SqlSession>,
 }
 pub(crate) type Slot = Arc<OnceLock<Admitted>>;
 

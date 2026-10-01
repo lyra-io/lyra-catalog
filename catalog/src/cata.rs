@@ -1,11 +1,11 @@
 use crate::Result;
 use crate::authentication::{AuthenticationHandler, Slot};
 use crate::inventory;
+use crate::inventory::SqlSession;
 use crate::options::CataOptions;
 use crate::query::Query;
 use crate::state::State;
 use crate::wire::process_socket;
-use datafusion_postgres::DfSessionService;
 use datafusion_postgres::pgwire::api::auth::StartupHandler;
 use datafusion_postgres::pgwire::api::cancel::{CancelHandler, DefaultCancelHandler};
 use datafusion_postgres::pgwire::api::query::{ExtendedQueryHandler, SimpleQueryHandler};
@@ -29,7 +29,7 @@ pub struct Cata {
     // Immutable state
     options: CataOptions,
     state: Arc<State>,
-    fallback: Arc<DfSessionService>,
+    fallback: Arc<SqlSession>,
     manager: Arc<ConnectionManager>,
     pids: Arc<RandomPidSecretKeyGenerator>,
     dummy: ScramSha256Verifier,
@@ -110,7 +110,7 @@ impl Cata {
                     let cancellation = self.state.shutdown.child_token();
                     let slot: Slot = Arc::new(OnceLock::new());
                     let factory = Factory {
-                        query: Arc::new(Query::new(Arc::clone(&self.state), Arc::clone(&slot), &self.fallback)),
+                        query: Arc::new(Query::new(Arc::clone(&self.state), Arc::clone(&slot), self.fallback.service())),
                         startup: Arc::new(AuthenticationHandler::new(Arc::clone(&self.state), slot, Arc::clone(&self.manager), Arc::clone(&self.pids), self.dummy.clone())),
                         cancel: Arc::new(DefaultCancelHandler::new(Arc::clone(&self.manager))),
                     };

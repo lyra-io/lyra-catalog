@@ -165,7 +165,7 @@ impl SimpleQueryHandler for Query {
                         .slot
                         .get()
                         .ok_or_else(|| CataError::sql("28000", "authentication required"))?;
-                    SimpleQueryHandler::do_query(current.query.as_ref(), client, sql).await
+                    SimpleQueryHandler::do_query(current.query.service(), client, sql).await
                 }
             } else {
                 self.execute(client, parsed, None)
@@ -220,7 +220,7 @@ impl ExtendedQueryHandler for Query {
                 .slot
                 .get()
                 .ok_or_else(|| CataError::sql("28000", "authentication required"))?;
-            ExtendedQueryHandler::do_query(current.query.as_ref(), client, portal, max_rows).await
+            ExtendedQueryHandler::do_query(current.query.service(), client, portal, max_rows).await
         } else {
             self.execute(client, parsed, Some(&portal.result_column_format))
                 .await
@@ -254,6 +254,7 @@ impl QueryParser for Parser {
                 .ok_or_else(|| CataError::sql("28000", "authentication required"))?;
             current
                 .query
+                .service()
                 .query_parser()
                 .parse_sql(client, sql, types)
                 .await

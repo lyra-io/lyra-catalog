@@ -3,7 +3,7 @@ use datafusion::arrow::array::{
     ArrayRef, BooleanArray, Int32Array, Int64Array, RecordBatch, StringArray,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use datafusion::catalog::{SchemaProvider, Session, TableProvider};
+use datafusion::catalog::{CatalogProvider, SchemaProvider, Session, TableProvider};
 use datafusion::datasource::memory::MemorySourceConfig;
 use datafusion::error::{DataFusionError, Result as DfResult};
 use datafusion::logical_expr::{Expr, TableType};
@@ -17,19 +17,45 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
+pub(crate) struct SqlSession {
+    // Immutable state
+    service: DfSessionService,
+    catalog: Arc<dyn CatalogProvider>,
+}
+
+impl SqlSession {
+    pub(crate) fn service(&self) -> &DfSessionService {
+        &self.service
+    }
+}
+
+impl Drop for SqlSession {
+    fn drop(&mut self) {
+        // datafusion-pg-catalog 0.18 retains the catalog list in its schema:
+        // list -> catalog -> pg_catalog -> list. Break that private session's
+        // cycle when its last owner goes away (including failed setup).
+        // This is an in-memory compatibility schema, never stored metadata.
+        let _ = self.catalog.deregister_schema("pg_catalog", true);
+    }
+}
+
 pub(crate) fn session(
     database: &str,
     metadata: Arc<dyn Metadata>,
-) -> crate::Result<Arc<DfSessionService>> {
-    let context = SessionContext::new_with_config(
+) -> crate::Result<Arc<SqlSession>> {
+    let context = Arc::new(SessionContext::new_with_config(
         SessionConfig::new()
             .with_default_catalog_and_schema(database, "public")
             .with_information_schema(true),
-    );
-    setup_pg_catalog(&context, database, EmptyContextProvider).map_err(|e| *e)?;
+    ));
     let catalog = context
         .catalog(database)
         .ok_or_else(|| DataFusionError::Internal("session catalog absent".into()))?;
+    let session = SqlSession {
+        service: DfSessionService::new(Arc::clone(&context)),
+        catalog: Arc::clone(&catalog),
+    };
+    setup_pg_catalog(&context, database, EmptyContextProvider).map_err(|e| *e)?;
     let base = catalog
         .schema("pg_catalog")
         .ok_or_else(|| DataFusionError::Internal("compatibility catalog absent".into()))?;
@@ -45,7 +71,7 @@ pub(crate) fn session(
         );
     }
     catalog.register_schema("pg_catalog", Arc::new(Overlay { base, tables }))?;
-    Ok(Arc::new(DfSessionService::new(Arc::new(context))))
+    Ok(Arc::new(session))
 }
 
 #[derive(Debug)]
@@ -239,5 +265,34 @@ impl TableProvider for Inventory {
             Arc::clone(&self.schema),
             projection.cloned(),
         )?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lyra_meta::metadata::MemoryMetadata;
+
+    #[test]
+    fn session_drop_releases_compatibility_catalog_and_metadata() {
+        let backend = Arc::new(MemoryMetadata::new());
+        let weak = Arc::downgrade(&backend);
+        let session = session("public", backend).unwrap();
+        let catalog = Arc::downgrade(&session.catalog);
+        let schema = Arc::downgrade(&session.catalog.schema("pg_catalog").unwrap());
+        let last_owner = Arc::clone(&session);
+        assert!(weak.upgrade().is_some());
+        drop(session);
+        assert!(
+            weak.upgrade().is_some(),
+            "another owner still needs the session"
+        );
+        drop(last_owner);
+        assert!(catalog.upgrade().is_none(), "session catalog cycle remains");
+        assert!(schema.upgrade().is_none(), "compatibility tables remain");
+        assert!(
+            weak.upgrade().is_none(),
+            "session catalog retained its metadata"
+        );
     }
 }
