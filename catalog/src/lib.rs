@@ -1,15 +1,14 @@
-//! Query and cluster control plane for Lyra.
-//!
-//! Cata parses and plans queries, maintains the cluster view through Oxia,
-//! and distributes execution tasks to Func runtimes.
-
-pub mod options;
-
+//! LIP-0001 database control plane and PostgreSQL protocol server.
+mod authentication;
 mod cata;
-mod error;
-mod executor;
-mod handler;
-mod sql;
+mod command;
+mod fault;
+mod inventory;
+pub mod options;
+mod query;
+mod state;
+mod telemetry;
+mod wire;
 
 pub use cata::Cata;
-pub use error::{CataError, Result};
+pub use fault::{CataError, Result};
