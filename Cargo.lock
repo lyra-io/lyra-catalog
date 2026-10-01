@@ -2745,7 +2745,7 @@ dependencies = [
 [[package]]
 name = "lyra-meta"
 version = "0.1.0"
-source = "git+https://github.com/lyra-io/lyra-meta.git?rev=890ba8a8f7612052fe2048998d9641e74484f1dc#890ba8a8f7612052fe2048998d9641e74484f1dc"
+source = "git+https://github.com/lyra-io/lyra-meta.git?rev=5223865bb4772b87033a6e1fd1b7c2d5edcc05a6#5223865bb4772b87033a6e1fd1b7c2d5edcc05a6"
 dependencies = [
  "async-trait",
  "axum",
@@ -3413,7 +3413,7 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 [[package]]
 name = "pprof"
 version = "0.15.0"
-source = "git+https://github.com/lyra-io/lyra-meta.git?rev=890ba8a8f7612052fe2048998d9641e74484f1dc#890ba8a8f7612052fe2048998d9641e74484f1dc"
+source = "git+https://github.com/lyra-io/lyra-meta.git?rev=5223865bb4772b87033a6e1fd1b7c2d5edcc05a6#5223865bb4772b87033a6e1fd1b7c2d5edcc05a6"
 dependencies = [
  "aligned-vec",
  "backtrace",
