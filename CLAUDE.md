@@ -73,3 +73,29 @@ pub struct Service {
 Catalog owns init/start CLI, the application manifest, SQL listener and health routes.
 Reuse Meta's manifest toolkit and observability; do not duplicate their implementations.
 Do not introduce database DDL into the foundation or treat discovery as writer fencing.
+
+## Layout and validation
+
+- `catalog` owns the stateless SQL service and protocol; `cli` owns `init`/`start`,
+  manifest integration, password-file handling, banner, and private HTTP routes.
+  `examples/catalog.toml` is the local manifest example.
+- Use Rust 1.92 with `protoc`, `pkg-config`, and OpenSSL development headers.
+  Keep `.cargo/config.toml` for Tokio instrumentation. Pin Meta by immutable Git
+  revision and commit the matching lockfile; do not commit local path dependencies.
+- Run `cargo fmt --all -- --check`, `cargo test --locked --workspace`, and
+  `cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings`.
+- Build with `docker build -t mattison/lyra-catalog:lip0000-mvp .` and validate the
+  actual Linux image through the companion charts repository's `ci/smoke.sh`.
+  Preserve function symbols/frame pointers for CPU profiling.
+- Follow approved LIP-0000. Bootstrap is explicit and idempotent, not a password
+  reset or migration mechanism. Do not add out-of-scope SQL DDL or a Catalog leader.
+- Passwords belong only in protected files passed to `init --password-file`.
+  Never commit or print credentials, verifiers, Secret payloads, or kubeconfigs.
+  Preserve retained kind clusters, volumes, and metadata during testing.
+
+## Shared conventions
+
+The shared rules are under review in [lyra-io/conventions](https://github.com/lyra-io/conventions).
+Do not treat an unmerged draft as approved policy. Once approved, adopt the shared
+rules in a reviewed instructions change: explicitly read the applicable shared files,
+retain component-specific instructions, and remove duplicated policy.
