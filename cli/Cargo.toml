@@ -13,15 +13,18 @@ path = "src/main.rs"
 [dependencies]
 lyra-catalog = { path = "../catalog" }
 lyra-meta = { workspace = true }
-arrow-array = { workspace = true }
-arrow-flight = { workspace = true }
-arrow-schema = { workspace = true }
 clap = { workspace = true }
-futures-util = { workspace = true }
 libc = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }
-toml = { workspace = true }
-tonic = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+toml = { workspace = true }
+async-trait = { workspace = true }
+tokio-util = { version = "0.7", features = ["rt"] }
+zeroize = "1.8"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
