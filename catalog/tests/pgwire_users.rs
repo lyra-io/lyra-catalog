@@ -1,115 +1,82 @@
-use lyra_catalog::Cata;
-use lyra_catalog::options::CataOptions;
-use lyra_meta::metadata::MemoryMetadata;
-use std::net::TcpListener;
+use lyra_catalog::{Cata, options::CataOptions};
+use lyra_meta::metadata::{MemoryMetadata, Metadata};
+use lyra_meta::utils::verifier::make_verifier;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::sleep;
+use tokio::net::TcpListener;
+use tokio::time::{sleep, timeout};
 use tokio_postgres::{Client, NoTls};
 
-#[tokio::test]
-async fn authenticates_catalog_users() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-
-    let metadata = Arc::new(MemoryMetadata::new());
-    let options = CataOptions::new("127.0.0.1", port).with_bootstrap_user("root", "s3cr3t");
-    let cata = Cata::new(options, metadata).await.unwrap();
-    let server = tokio::spawn(cata.serve());
-
-    let root = connect0(port, "root", "s3cr3t").await;
-    root.batch_execute("CREATE USER reader WITH PASSWORD 'reader-password'")
-        .await
-        .unwrap();
-    root.batch_execute("CREATE SECRET login_password VALUE 'secret-password'")
-        .await
-        .unwrap();
-    root.batch_execute("CREATE USER secret_reader PASSWORD SECRET login_password")
-        .await
-        .unwrap();
-
-    let reader = connect0(port, "reader", "reader-password").await;
-    let value: i64 = reader.query_one("SELECT 1", &[]).await.unwrap().get(0);
-    assert_eq!(value, 1);
-    let secret_reader = connect0(port, "secret_reader", "secret-password").await;
-    let value: i64 = secret_reader
-        .query_one("SELECT 1", &[])
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(value, 1);
-
-    root.batch_execute("ALTER USER reader PASSWORD SECRET login_password")
-        .await
-        .unwrap();
-    root.batch_execute("DROP SECRET login_password")
-        .await
-        .unwrap();
-    let reader = connect0(port, "reader", "secret-password").await;
-    let value: i64 = reader.query_one("SELECT 1", &[]).await.unwrap().get(0);
-    assert_eq!(value, 1);
-
-    root.batch_execute("ALTER USER secret_reader PASSWORD NULL")
-        .await
-        .unwrap();
-    let without_password = format!(
-        "host=127.0.0.1 port={port} user=secret_reader password=secret-password \
-         dbname=dev sslmode=disable"
+async fn connect(
+    port: u16,
+    password: &str,
+    database: &str,
+) -> Result<Client, tokio_postgres::Error> {
+    let parameters = format!(
+        "host=127.0.0.1 port={port} user=lyrasys password={password} dbname={database} sslmode=disable"
     );
-    assert!(
-        tokio_postgres::connect(&without_password, NoTls)
-            .await
-            .is_err()
-    );
-
-    let rows = root
-        .query("SELECT name FROM rw_catalog.rw_users ORDER BY name", &[])
-        .await
-        .unwrap();
-    assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0].get::<_, String>(0), "reader");
-    assert_eq!(rows[1].get::<_, String>(0), "root");
-    assert_eq!(rows[2].get::<_, String>(0), "secret_reader");
-
-    let rows = root.query("SHOW USERS", &[]).await.unwrap();
-    assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0].get::<_, String>(0), "reader");
-    assert_eq!(rows[1].get::<_, String>(0), "root");
-    assert_eq!(rows[2].get::<_, String>(0), "secret_reader");
-
-    let roles = root
-        .query(
-            "SELECT rolname FROM pg_catalog.pg_roles ORDER BY rolname",
-            &[],
-        )
-        .await
-        .unwrap();
-    assert_eq!(roles.len(), 3);
-
-    let invalid =
-        format!("host=127.0.0.1 port={port} user=root password=wrong dbname=dev sslmode=disable");
-    assert!(tokio_postgres::connect(&invalid, NoTls).await.is_err());
-
-    server.abort();
+    let (client, connection) = tokio_postgres::connect(&parameters, NoTls).await?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    Ok(client)
 }
 
-async fn connect0(port: u16, user: &str, password: &str) -> Client {
-    let connection = format!(
-        "host=127.0.0.1 port={port} user={user} password={password} dbname=dev sslmode=disable"
-    );
-    let mut last_error = None;
-    for _ in 0..50 {
-        match tokio_postgres::connect(&connection, NoTls).await {
-            Ok((client, connection)) => {
-                tokio::spawn(async move {
-                    let _ = connection.await;
-                });
-                return client;
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_stateless_catalogs_authenticate_and_serve_read_only_queries() {
+    let metadata = Arc::new(MemoryMetadata::new());
+    metadata
+        .initialize(make_verifier("test-only").unwrap())
+        .await
+        .unwrap();
+    let other = Arc::new(metadata.new_client());
+    let mut servers = Vec::new();
+    let mut catalogs = Vec::new();
+    for backend in [metadata.clone(), other.clone()] {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let catalog = Arc::new(Cata::new(CataOptions::default(), backend).await.unwrap());
+        let server = Arc::clone(&catalog);
+        servers.push(tokio::spawn(async move {
+            server.start_with_listener(listener).await
+        }));
+        timeout(Duration::from_secs(3), async {
+            while !catalog.probe().await.1 {
+                sleep(Duration::from_millis(10)).await;
             }
-            Err(error) => last_error = Some(error),
+        })
+        .await
+        .unwrap();
+        assert!(catalog.probe().await.0);
+        let client = connect(port, "test-only", "public").await.unwrap();
+        let value: i64 = client.query_one("SELECT 1", &[]).await.unwrap().get(0);
+        assert_eq!(value, 1);
+        let database: String = client
+            .query_one("SELECT current_database()", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(database, "public");
+        assert_eq!(client.query("SHOW DATABASES", &[]).await.unwrap().len(), 2);
+        for sql in [
+            "CREATE DATABASE forbidden",
+            "ALTER DATABASE public OWNER TO lyrasys",
+            "DROP DATABASE public",
+            "CREATE USER forbidden",
+        ] {
+            assert!(client.batch_execute(sql).await.is_err());
         }
-        sleep(Duration::from_millis(20)).await;
+        assert!(connect(port, "wrong", "public").await.is_err());
+        assert!(connect(port, "test-only", "lyrasys").await.is_err());
+        catalogs.push(catalog);
     }
-    panic!("failed to connect to Cata: {}", last_error.unwrap());
+    assert_eq!(metadata.list_components().await.unwrap().len(), 2);
+    for catalog in catalogs {
+        catalog.cancellation().cancel();
+    }
+    for server in servers {
+        server.await.unwrap().unwrap();
+    }
+    metadata.close().await.unwrap();
+    other.close().await.unwrap();
 }

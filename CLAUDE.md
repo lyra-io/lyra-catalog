@@ -1,0 +1,101 @@
+# Project Instructions
+
+## Pull-request-only workflow
+
+- All changes must reach the default branch through a GitHub pull request, including code, documentation, automation, dependency updates, and upstream synchronization.
+- Never commit or push directly to `main`, `master`, or another default or protected integration branch.
+- Work on a topic branch using a conventional prefix such as `feat/`, `fix/`, `docs/`, or `chore/`; never use `codex/`.
+- Push the topic branch and open or update a pull request. Do not merge or enable auto-merge unless the user explicitly requests it.
+- When a merge is explicitly requested, use squash merge only. Merge commits and rebase merges are not allowed.
+- This policy applies to contributors, administrators, and automation. Do not bypass or disable branch protections to land changes.
+- Require pull requests on the default branch without bypass actors where GitHub supports enforcement. If the repository's plan prevents enforcement, report the gap and still follow this workflow; do not change its visibility or billing plan without explicit approval.
+
+## Rust imports
+
+- Import referenced types into scope and use their short names instead of repeating fully qualified paths. For example, prefer `use wal::WalError;` and `WalError::Io` over `crate::wal::WalError::Io`.
+
+## Rust module layout
+
+- Keep `mod.rs` files declarative. They may contain module declarations, exports and re-exports, interfaces, shared type declarations, and constants.
+- Do not put operational logic or function implementations in `mod.rs`; place them in clearly named submodules instead.
+- As an explicit exception, `wal/segment/mod.rs` may contain small segment namespace utilities such as path construction and directory listing or syncing.
+- In `mod.rs`, place traits after module declarations, exports and re-exports, type aliases, and constants.
+
+## Rust implementation helpers
+
+- Use numbered suffixes for private implementation layers, such as `open0` and `open1`, instead of names such as `open_inner`.
+- Use associated `Type::new` functions for type constructors.
+- Reserve the `make_` prefix for free utilities that derive standalone values such as paths, names, or static-like strings, for example `make_segment_path`.
+- Keep short, single-use logic inline instead of extracting a helper that is only several straightforward lines.
+
+## Stateful Rust structs
+
+- Group fields in this order: control state, immutable state, then mutable state.
+- Add `// Control state`, `// Immutable state`, and `// Mutable state` comments to make the groups explicit.
+- Within control state, declare an execution or cancellation context first and background task handles immediately after it.
+- Follow the same field order in struct initializers when practical.
+
+Example:
+
+```rust
+pub struct Service {
+    // Control state
+    context: CancellationToken,
+    tasks: Mutex<Option<JoinSet<()>>>,
+
+    // Immutable state
+    request_tx: mpsc::Sender<Request>,
+    options: ServiceOptions,
+
+    // Mutable state
+    state: Arc<RwLock<State>>,
+}
+```
+
+## Repository workflow
+
+- Use feature branches and pull requests; never push directly to the default branch.
+- Never use a `codex/` branch prefix. Use `feat/`, `fix/`, `test/`, or `chore/`.
+- Merges are squash-only. Do not merge or enable auto-merge without Mattison's request.
+- Keep this MVP in one implementation PR per repository until review.
+- CLAUDE.md is the source of repository instructions; AGENTS.md is a relative symlink to it.
+
+## API naming
+
+- Local fields: `identity()`, `name()`.
+- Stored reads: `fetch_*()`; enumeration: `list_*()`.
+- Persistence: `store_*()` with explicit conditional/overwrite semantics.
+- Create-if-absent: `create_*()`; update-existing: `update_*()`.
+- Lifecycle: `initialize()`, `register_catalog_component()`, `close()`.
+
+## Foundation scope
+
+Catalog owns init/start CLI, the application manifest, SQL listener and health routes.
+Reuse Meta's manifest toolkit and observability; do not duplicate their implementations.
+Do not introduce database DDL into the foundation or treat discovery as writer fencing.
+
+## Layout and validation
+
+- `catalog` owns the stateless SQL service and protocol; `cli` owns `init`/`start`,
+  manifest integration, password-file handling, banner, and private HTTP routes.
+  `examples/catalog.toml` is the local manifest example.
+- Use Rust 1.92 with `protoc`, `pkg-config`, and OpenSSL development headers.
+  Keep `.cargo/config.toml` for Tokio instrumentation. Pin Meta by immutable Git
+  revision and commit the matching lockfile; do not commit local path dependencies.
+- Run `cargo fmt --all -- --check`, `cargo test --locked --workspace`, and
+  `cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings`.
+- Build with `docker build -t mattison/lyra-catalog:lip0000-mvp .` and validate the
+  actual Linux image through the companion charts repository's `ci/smoke.sh`.
+  Preserve function symbols/frame pointers for CPU profiling.
+- Follow approved LIP-0000. Bootstrap is explicit and idempotent, not a password
+  reset or migration mechanism. Do not add out-of-scope SQL DDL or a Catalog leader.
+- Passwords belong only in protected files passed to `init --password-file`.
+  Never commit or print credentials, verifiers, Secret payloads, or kubeconfigs.
+  Preserve retained kind clusters, volumes, and metadata during testing.
+
+## Shared conventions
+
+The shared rules are under review in [lyra-io/conventions](https://github.com/lyra-io/conventions).
+Do not treat an unmerged draft as approved policy. Once approved, adopt the shared
+rules in a reviewed instructions change: explicitly read the applicable shared files,
+retain component-specific instructions, and remove duplicated policy.

@@ -1,0 +1,32 @@
+[metadata.oxia]
+endpoint = "127.0.0.1:6648"
+namespace = "default"
+
+[server.public]
+listen = "127.0.0.1:5432"
+
+[server.health]
+listen = "127.0.0.1:8080"
+
+[server.tokio_console]
+listen = "127.0.0.1:6669"
+
+[observability.metrics.prometheus]
+enabled = true
+listen = "127.0.0.1:9090"
+path = "/metrics"
+
+[observability.log]
+level = "info"
+
+[observability.pprof]
+enabled = true
+frequency_hz = 99
+default_duration_seconds = 30
+max_duration_seconds = 60
+
+[observability.tokio_console]
+enabled = false
+publish_interval_ms = 1000
+retention_seconds = 60
+event_buffer_capacity = 10240
