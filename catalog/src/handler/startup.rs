@@ -137,6 +137,7 @@ impl AuthSource for MetadataPasswordSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::FaultMetadata;
     use lyra_meta::metadata::{MemoryMetadata, MetadataPutCondition};
     use lyra_meta::proto::pb_catalog::{Database, Schema, User};
     use lyra_meta::utils::scram::make_scram_value;
@@ -207,5 +208,102 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(error, PgWireError::InvalidPassword(name) if name == "missing"));
+    }
+
+    #[tokio::test]
+    async fn requires_a_user_and_an_existing_catalog() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        let databases = Arc::new(DatabaseHandles::new(metadata.clone()).unwrap());
+        let provider = Arc::new(BasicAuthenticationProvider::new(metadata.clone()));
+        let source = MetadataPasswordSource::new(provider, metadata.clone(), databases);
+
+        assert!(matches!(
+            source
+                .password0(&LoginInfo::new(None, None, "127.0.0.1".to_string()))
+                .await,
+            Err(PgWireError::UserError(info)) if info.code == "28000"
+        ));
+
+        metadata
+            .put_user(
+                User {
+                    name: "alice".to_string(),
+                    password: Some(make_scram_value("s3cr3t")),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            source
+                .password0(&LoginInfo::new(
+                    Some("alice"),
+                    Some("missing"),
+                    "127.0.0.1".to_string()
+                ))
+                .await,
+            Err(PgWireError::UserError(info)) if info.code == "3D000"
+        ));
+
+        metadata
+            .put_database(
+                Database {
+                    name: "db1".to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            source
+                .password0(&LoginInfo::new(
+                    Some("alice"),
+                    Some("db1"),
+                    "127.0.0.1".to_string()
+                ))
+                .await,
+            Err(PgWireError::UserError(info)) if info.code == "3F000"
+        ));
+    }
+
+    #[tokio::test]
+    async fn maps_metadata_failures_to_pgwire_errors() {
+        let metadata = Arc::new(FaultMetadata::new());
+        let databases = Arc::new(DatabaseHandles::new(metadata.clone()).unwrap());
+        let provider = Arc::new(BasicAuthenticationProvider::new(metadata.clone()));
+        let source = MetadataPasswordSource::new(provider, metadata.clone(), databases);
+        metadata.fail("get_user");
+
+        assert!(matches!(
+            source
+                .password0(&LoginInfo::new(
+                    Some("alice"),
+                    Some(DEFAULT_DATABASE_NAME),
+                    "127.0.0.1".to_string()
+                ))
+                .await,
+            Err(PgWireError::UserError(info)) if info.code == "XX000"
+        ));
+    }
+
+    #[tokio::test]
+    async fn constructs_the_startup_handler_and_debug_output() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        let databases = Arc::new(DatabaseHandles::new(metadata.clone()).unwrap());
+        let provider = Arc::new(BasicAuthenticationProvider::new(metadata.clone()));
+        let source = Arc::new(MetadataPasswordSource::new(provider, metadata, databases));
+
+        assert_eq!(
+            format!("{source:?}"),
+            "MetadataPasswordSource { .. }"
+        );
+
+        let handler = StartupHandler::new(
+            Arc::new(ConnectionManager::new()),
+            Arc::new(BasicAuthenticationProvider::new(Arc::new(MemoryMetadata::new()))),
+            Arc::new(MemoryMetadata::new()),
+            Arc::new(DatabaseHandles::new(Arc::new(MemoryMetadata::new())).unwrap()),
+        );
+        let _ = handler.new_handler();
     }
 }

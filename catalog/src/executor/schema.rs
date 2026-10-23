@@ -234,3 +234,413 @@ async fn drop_schema_contents0(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sql::SchemaName;
+    use crate::test_support::FaultMetadata;
+    use lyra_meta::metadata::MemoryMetadata;
+    use lyra_meta::proto::pb_catalog::{Connection, Database, Secret, SecretRef};
+
+    async fn seed_database(metadata: &dyn Metadata, database: &str) {
+        metadata
+            .put_database(
+                Database {
+                    name: database.to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+    }
+
+    async fn seed_schema(metadata: &dyn Metadata, database: &str, schema: &str) {
+        metadata
+            .put_schema(
+                database,
+                Schema {
+                    name: schema.to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn create_adds_schemas_to_the_current_or_explicit_database() {
+        let metadata = MemoryMetadata::new();
+        seed_database(&metadata, "db1").await;
+        seed_database(&metadata, "db2").await;
+        let executor = SchemaExecutor::new(Arc::new(metadata));
+
+        assert_eq!(
+            executor
+                .create(
+                    "db1",
+                    &CreateSchema::new(SchemaName::new(None, "s1".to_string()), false)
+                )
+                .await
+                .unwrap(),
+            CreateSchemaOutcome::Created
+        );
+        assert_eq!(
+            executor
+                .create(
+                    "db1",
+                    &CreateSchema::new(SchemaName::new(Some("db2".to_string()), "s2".to_string()), false)
+                )
+                .await
+                .unwrap(),
+            CreateSchemaOutcome::Created
+        );
+    }
+
+    #[tokio::test]
+    async fn create_rejects_missing_databases() {
+        let executor = SchemaExecutor::new(Arc::new(MemoryMetadata::new()));
+
+        assert!(matches!(
+            executor
+                .create(
+                    "missing",
+                    &CreateSchema::new(SchemaName::new(None, "s".to_string()), false)
+                )
+                .await,
+            Err(CataError::DatabaseNotFound(name)) if name == "missing"
+        ));
+    }
+
+    #[tokio::test]
+    async fn create_handles_existing_schemas() {
+        let metadata = MemoryMetadata::new();
+        seed_database(&metadata, "db1").await;
+        seed_schema(&metadata, "db1", "s1").await;
+        let executor = SchemaExecutor::new(Arc::new(metadata));
+
+        assert_eq!(
+            executor
+                .create(
+                    "db1",
+                    &CreateSchema::new(SchemaName::new(None, "s1".to_string()), true)
+                )
+                .await
+                .unwrap(),
+            CreateSchemaOutcome::AlreadyExists
+        );
+        assert!(matches!(
+            executor
+                .create(
+                    "db1",
+                    &CreateSchema::new(SchemaName::new(None, "s1".to_string()), false)
+                )
+                .await,
+            Err(CataError::SchemaAlreadyExists { schema, .. }) if schema == "s1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn create_handles_put_conflicts_and_failures() {
+        let metadata = Arc::new(FaultMetadata::new());
+        seed_database(metadata.as_ref(), "db1").await;
+        let executor = SchemaExecutor::new(metadata.clone());
+
+        metadata.conflict("put_schema");
+        assert_eq!(
+            executor
+                .create(
+                    "db1",
+                    &CreateSchema::new(SchemaName::new(None, "s1".to_string()), true)
+                )
+                .await
+                .unwrap(),
+            CreateSchemaOutcome::AlreadyExists
+        );
+        assert!(matches!(
+            executor
+                .create(
+                    "db1",
+                    &CreateSchema::new(SchemaName::new(None, "s1".to_string()), false)
+                )
+                .await,
+            Err(CataError::SchemaAlreadyExists { schema, .. }) if schema == "s1"
+        ));
+
+        metadata.clear("put_schema");
+        metadata.fail("put_schema");
+        assert!(matches!(
+            executor
+                .create(
+                    "db1",
+                    &CreateSchema::new(SchemaName::new(None, "s1".to_string()), false)
+                )
+                .await,
+            Err(CataError::Metadata(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn alter_renames_schemas() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        seed_database(metadata.as_ref(), "db1").await;
+        seed_schema(metadata.as_ref(), "db1", "s1").await;
+        let executor = SchemaExecutor::new(metadata.clone());
+
+        executor
+            .alter(
+                "db1",
+                &AlterSchema::new(SchemaName::new(None, "s1".to_string()), "s2".to_string()),
+            )
+            .await
+            .unwrap();
+        assert!(metadata.get_schema("db1", "s1").await.unwrap().is_none());
+        assert!(metadata.get_schema("db1", "s2").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn alter_rejects_missing_databases_schemas_and_nonempty() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        seed_database(metadata.as_ref(), "db1").await;
+        seed_schema(metadata.as_ref(), "db1", "s1").await;
+        let executor = SchemaExecutor::new(metadata.clone());
+
+        assert!(matches!(
+            executor
+                .alter(
+                    "missing",
+                    &AlterSchema::new(SchemaName::new(None, "s1".to_string()), "s2".to_string())
+                )
+                .await,
+            Err(CataError::DatabaseNotFound(name)) if name == "missing"
+        ));
+        assert!(matches!(
+            executor
+                .alter(
+                    "db1",
+                    &AlterSchema::new(SchemaName::new(None, "missing".to_string()), "s2".to_string())
+                )
+                .await,
+            Err(CataError::SchemaNotFound { schema, .. }) if schema == "missing"
+        ));
+
+        metadata
+            .put_secret(
+                "db1",
+                "s1",
+                Secret {
+                    name: "password".to_string(),
+                    value: b"x".to_vec().into(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            executor
+                .alter(
+                    "db1",
+                    &AlterSchema::new(SchemaName::new(None, "s1".to_string()), "s2".to_string())
+                )
+                .await,
+            Err(CataError::SchemaNotEmpty { schema, .. }) if schema == "s1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn alter_handles_conflicts_and_failures() {
+        let metadata = Arc::new(FaultMetadata::new());
+        seed_database(metadata.as_ref(), "db1").await;
+        seed_schema(metadata.as_ref(), "db1", "s1").await;
+        seed_schema(metadata.as_ref(), "db1", "s2").await;
+        let executor = SchemaExecutor::new(metadata.clone());
+
+        assert!(matches!(
+            executor
+                .alter(
+                    "db1",
+                    &AlterSchema::new(SchemaName::new(None, "s1".to_string()), "s2".to_string())
+                )
+                .await,
+            Err(CataError::SchemaAlreadyExists { schema, .. }) if schema == "s2"
+        ));
+
+        metadata.fail("delete_schema");
+        assert!(matches!(
+            executor
+                .alter(
+                    "db1",
+                    &AlterSchema::new(SchemaName::new(None, "s1".to_string()), "s3".to_string())
+                )
+                .await,
+            Err(CataError::Metadata(_))
+        ));
+        metadata.clear("delete_schema");
+
+        metadata.conflict("delete_schema");
+        assert!(matches!(
+            executor
+                .alter(
+                    "db1",
+                    &AlterSchema::new(SchemaName::new(None, "s1".to_string()), "s4".to_string())
+                )
+                .await,
+            Err(CataError::SchemaChanged { schema, .. }) if schema == "s1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn drop_handles_success_and_missing_schemas() {
+        let metadata = MemoryMetadata::new();
+        seed_database(&metadata, "db1").await;
+        seed_schema(&metadata, "db1", "s1").await;
+        let executor = SchemaExecutor::new(Arc::new(metadata));
+
+        assert_eq!(
+            executor
+                .drop(
+                    "db1",
+                    &DropSchema::new(SchemaName::new(None, "s1".to_string()), false, false)
+                )
+                .await
+                .unwrap(),
+            DropSchemaOutcome::Dropped
+        );
+        assert_eq!(
+            executor
+                .drop(
+                    "db1",
+                    &DropSchema::new(SchemaName::new(None, "missing".to_string()), true, false)
+                )
+                .await
+                .unwrap(),
+            DropSchemaOutcome::NotFound
+        );
+        assert!(matches!(
+            executor
+                .drop(
+                    "db1",
+                    &DropSchema::new(SchemaName::new(None, "missing".to_string()), false, false)
+                )
+                .await,
+            Err(CataError::SchemaNotFound { schema, .. }) if schema == "missing"
+        ));
+        assert!(matches!(
+            executor
+                .drop(
+                    "missing",
+                    &DropSchema::new(SchemaName::new(None, "s1".to_string()), false, false)
+                )
+                .await,
+            Err(CataError::DatabaseNotFound(name)) if name == "missing"
+        ));
+    }
+
+    #[tokio::test]
+    async fn drop_cascades_or_rejects_nonempty_schemas() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        seed_database(metadata.as_ref(), "db1").await;
+        seed_schema(metadata.as_ref(), "db1", "s1").await;
+        metadata
+            .put_secret(
+                "db1",
+                "s1",
+                Secret {
+                    name: "password".to_string(),
+                    value: b"x".to_vec().into(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        metadata
+            .put_connection(
+                "db1",
+                "s1",
+                Connection {
+                    name: "conn".to_string(),
+                    options: Default::default(),
+                    secret_refs: vec![SecretRef {
+                        name: "password".to_string(),
+                        data: "password".to_string(),
+                    }],
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = SchemaExecutor::new(metadata.clone());
+
+        assert!(matches!(
+            executor
+                .drop(
+                    "db1",
+                    &DropSchema::new(SchemaName::new(None, "s1".to_string()), false, false)
+                )
+                .await,
+            Err(CataError::SchemaNotEmpty { schema, .. }) if schema == "s1"
+        ));
+
+        assert_eq!(
+            executor
+                .drop(
+                    "db1",
+                    &DropSchema::new(SchemaName::new(None, "s1".to_string()), false, true)
+                )
+                .await
+                .unwrap(),
+            DropSchemaOutcome::Dropped
+        );
+        assert!(metadata.get_schema("db1", "s1").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn drop_reports_conflicts() {
+        let metadata = Arc::new(FaultMetadata::new());
+        seed_database(metadata.as_ref(), "db1").await;
+        seed_schema(metadata.as_ref(), "db1", "s1").await;
+        let executor = SchemaExecutor::new(metadata.clone());
+        metadata.conflict("delete_schema");
+
+        assert!(matches!(
+            executor
+                .drop(
+                    "db1",
+                    &DropSchema::new(SchemaName::new(None, "s1".to_string()), false, false)
+                )
+                .await,
+            Err(CataError::SchemaChanged { schema, .. }) if schema == "s1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn show_lists_sorted_schemas_with_optional_like() {
+        let metadata = MemoryMetadata::new();
+        seed_database(&metadata, "db1").await;
+        for name in ["zeta", "alpha", "alpine"] {
+            seed_schema(&metadata, "db1", name).await;
+        }
+        let executor = SchemaExecutor::new(Arc::new(metadata));
+
+        assert_eq!(
+            executor
+                .show("db1", &ShowSchemas::new(None))
+                .await
+                .unwrap(),
+            vec!["alpha".to_string(), "alpine".to_string(), "zeta".to_string()]
+        );
+        assert_eq!(
+            executor
+                .show("db1", &ShowSchemas::new(Some("alp%".to_string())))
+                .await
+                .unwrap(),
+            vec!["alpha".to_string(), "alpine".to_string()]
+        );
+        assert!(matches!(
+            executor
+                .show("missing", &ShowSchemas::new(None))
+                .await,
+            Err(CataError::DatabaseNotFound(name)) if name == "missing"
+        ));
+    }
+}

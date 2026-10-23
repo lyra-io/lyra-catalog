@@ -241,3 +241,457 @@ impl DatabaseExecutor {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::handler::DatabaseHandles;
+    use crate::test_support::FaultMetadata;
+    use lyra_meta::metadata::{MemoryMetadata, DEFAULT_SCHEMA_NAME};
+    use lyra_meta::proto::pb_catalog::Secret;
+
+    fn executor0(metadata: Arc<dyn Metadata>) -> DatabaseExecutor {
+        let databases = Arc::new(DatabaseHandles::new(Arc::clone(&metadata)).unwrap());
+        DatabaseExecutor::new(metadata, databases)
+    }
+
+    async fn seed_database(metadata: &Arc<MemoryMetadata>, name: &str) {
+        metadata
+            .put_database(
+                Database { name: name.into() },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn create_adds_the_default_schema() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        let executor = executor0(metadata.clone());
+
+        let outcome = executor
+            .create(&CreateDatabase::new("analytics".to_string(), false))
+            .await
+            .unwrap();
+        assert_eq!(outcome, CreateDatabaseOutcome::Created);
+        assert!(
+            metadata
+                .get_database("analytics")
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            metadata
+                .get_schema("analytics", DEFAULT_SCHEMA_NAME)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn create_handles_existing_databases() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        seed_database(&metadata, "analytics").await;
+        let executor = executor0(metadata);
+
+        assert_eq!(
+            executor
+                .create(&CreateDatabase::new("analytics".to_string(), true))
+                .await
+                .unwrap(),
+            CreateDatabaseOutcome::AlreadyExists
+        );
+        assert!(matches!(
+            executor
+                .create(&CreateDatabase::new("analytics".to_string(), false))
+                .await,
+            Err(CataError::DatabaseAlreadyExists(name)) if name == "analytics"
+        ));
+    }
+
+    #[tokio::test]
+    async fn create_handles_put_database_conflicts() {
+        let metadata = Arc::new(FaultMetadata::new());
+        metadata.conflict("put_database");
+        let executor = executor0(metadata.clone());
+
+        assert_eq!(
+            executor
+                .create(&CreateDatabase::new("analytics".to_string(), true))
+                .await
+                .unwrap(),
+            CreateDatabaseOutcome::AlreadyExists
+        );
+        assert!(matches!(
+            executor
+                .create(&CreateDatabase::new("analytics".to_string(), false))
+                .await,
+            Err(CataError::DatabaseAlreadyExists(name)) if name == "analytics"
+        ));
+    }
+
+    #[tokio::test]
+    async fn create_rolls_back_when_schema_provisioning_fails() {
+        let metadata = Arc::new(FaultMetadata::new());
+        metadata.fail("put_schema");
+        let executor = executor0(metadata.clone());
+
+        assert!(matches!(
+            executor
+                .create(&CreateDatabase::new("analytics".to_string(), false))
+                .await,
+            Err(CataError::Metadata(_))
+        ));
+        metadata.clear("put_schema");
+        assert!(
+            metadata
+                .get_database("analytics")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn alter_renames_a_database_and_its_schemas() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        seed_database(&metadata, "analytics").await;
+        metadata
+            .put_schema(
+                "analytics",
+                Schema {
+                    name: DEFAULT_SCHEMA_NAME.to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = executor0(metadata.clone());
+
+        executor
+            .alter(
+                "other",
+                &AlterDatabase::new("analytics".to_string(), "reporting".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            metadata
+                .get_database("analytics")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            metadata
+                .get_schema("reporting", DEFAULT_SCHEMA_NAME)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn alter_rejects_active_and_missing_databases() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        seed_database(&metadata, "analytics").await;
+        let executor = executor0(metadata);
+
+        assert!(matches!(
+            executor
+                .alter(
+                    "analytics",
+                    &AlterDatabase::new("analytics".to_string(), "reporting".to_string())
+                )
+                .await,
+            Err(CataError::DatabaseInUse(name)) if name == "analytics"
+        ));
+        assert!(matches!(
+            executor
+                .alter(
+                    "other",
+                    &AlterDatabase::new(DEFAULT_DATABASE_NAME.to_string(), "reporting".to_string())
+                )
+                .await,
+            Err(CataError::DatabaseInUse(name)) if name == DEFAULT_DATABASE_NAME
+        ));
+        assert!(matches!(
+            executor
+                .alter(
+                    "other",
+                    &AlterDatabase::new("missing".to_string(), "reporting".to_string())
+                )
+                .await,
+            Err(CataError::DatabaseNotFound(name)) if name == "missing"
+        ));
+    }
+
+    #[tokio::test]
+    async fn alter_rejects_existing_targets_and_nonempty_databases() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        seed_database(&metadata, "analytics").await;
+        seed_database(&metadata, "reporting").await;
+        metadata
+            .put_schema(
+                "analytics",
+                Schema {
+                    name: DEFAULT_SCHEMA_NAME.to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = executor0(metadata.clone());
+
+        assert!(matches!(
+            executor
+                .alter(
+                    "other",
+                    &AlterDatabase::new("analytics".to_string(), "reporting".to_string())
+                )
+                .await,
+            Err(CataError::DatabaseAlreadyExists(name)) if name == "reporting"
+        ));
+
+        metadata
+            .put_secret(
+                "analytics",
+                DEFAULT_SCHEMA_NAME,
+                Secret {
+                    name: "password".to_string(),
+                    value: b"x".to_vec().into(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            executor
+                .alter(
+                    "other",
+                    &AlterDatabase::new("analytics".to_string(), "warehouse".to_string())
+                )
+                .await,
+            Err(CataError::DatabaseNotEmpty(name)) if name == "analytics"
+        ));
+    }
+
+    #[tokio::test]
+    async fn alter_reports_target_conflicts_and_rolls_back() {
+        let metadata = Arc::new(FaultMetadata::new());
+        metadata
+            .put_database(
+                Database {
+                    name: "analytics".to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        metadata
+            .put_schema(
+                "analytics",
+                Schema {
+                    name: DEFAULT_SCHEMA_NAME.to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = executor0(metadata.clone());
+
+        metadata.conflict("put_database");
+        assert!(matches!(
+            executor
+                .alter(
+                    "other",
+                    &AlterDatabase::new("analytics".to_string(), "reporting".to_string())
+                )
+                .await,
+            Err(CataError::DatabaseAlreadyExists(name)) if name == "reporting"
+        ));
+
+        metadata.clear("put_database");
+        metadata.fail("put_schema");
+        assert!(matches!(
+            executor
+                .alter(
+                    "other",
+                    &AlterDatabase::new("analytics".to_string(), "reporting".to_string())
+                )
+                .await,
+            Err(CataError::Metadata(_))
+        ));
+        metadata.clear("put_schema");
+        assert!(
+            metadata
+                .get_database("reporting")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn alter_reports_source_conflicts() {
+        let metadata = Arc::new(FaultMetadata::new());
+        metadata
+            .put_database(
+                Database {
+                    name: "analytics".to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        metadata
+            .put_schema(
+                "analytics",
+                Schema {
+                    name: DEFAULT_SCHEMA_NAME.to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = executor0(metadata.clone());
+
+        metadata.conflict("delete_schema");
+        assert!(matches!(
+            executor
+                .alter(
+                    "other",
+                    &AlterDatabase::new("analytics".to_string(), "reporting".to_string())
+                )
+                .await,
+            Err(CataError::DatabaseChanged(name)) if name == "analytics"
+        ));
+    }
+
+    #[tokio::test]
+    async fn drop_handles_success_and_missing_databases() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        seed_database(&metadata, "analytics").await;
+        let executor = executor0(metadata.clone());
+
+        assert_eq!(
+            executor
+                .drop(
+                    "other",
+                    &DropDatabase::new("analytics".to_string(), false)
+                )
+                .await
+                .unwrap(),
+            DropDatabaseOutcome::Dropped
+        );
+        assert_eq!(
+            executor
+                .drop(
+                    "other",
+                    &DropDatabase::new("missing".to_string(), true)
+                )
+                .await
+                .unwrap(),
+            DropDatabaseOutcome::NotFound
+        );
+        assert!(matches!(
+            executor
+                .drop(
+                    "other",
+                    &DropDatabase::new("missing".to_string(), false)
+                )
+                .await,
+            Err(CataError::DatabaseNotFound(name)) if name == "missing"
+        ));
+    }
+
+    #[tokio::test]
+    async fn drop_rejects_active_and_nonempty_databases() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        seed_database(&metadata, "analytics").await;
+        metadata
+            .put_schema(
+                "analytics",
+                Schema {
+                    name: DEFAULT_SCHEMA_NAME.to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = executor0(metadata);
+
+        assert!(matches!(
+            executor
+                .drop(
+                    "analytics",
+                    &DropDatabase::new("analytics".to_string(), false)
+                )
+                .await,
+            Err(CataError::DatabaseInUse(name)) if name == "analytics"
+        ));
+        assert!(matches!(
+            executor
+                .drop(
+                    "other",
+                    &DropDatabase::new("analytics".to_string(), false)
+                )
+                .await,
+            Err(CataError::DatabaseNotEmpty(name)) if name == "analytics"
+        ));
+    }
+
+    #[tokio::test]
+    async fn drop_reports_conflicts() {
+        let metadata = Arc::new(FaultMetadata::new());
+        metadata
+            .put_database(
+                Database {
+                    name: "analytics".to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = executor0(metadata.clone());
+        metadata.conflict("delete_database");
+
+        assert!(matches!(
+            executor
+                .drop(
+                    "other",
+                    &DropDatabase::new("analytics".to_string(), false)
+                )
+                .await,
+            Err(CataError::DatabaseChanged(name)) if name == "analytics"
+        ));
+    }
+
+    #[tokio::test]
+    async fn show_lists_sorted_databases_with_optional_like() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        for name in ["zeta", "alpha", "alpine"] {
+            seed_database(&metadata, name).await;
+        }
+        let executor = executor0(metadata);
+
+        assert_eq!(
+            executor
+                .show(&ShowDatabases::new(None))
+                .await
+                .unwrap(),
+            vec!["alpha".to_string(), "alpine".to_string(), "zeta".to_string()]
+        );
+        assert_eq!(
+            executor
+                .show(&ShowDatabases::new(Some("alp%".to_string())))
+                .await
+                .unwrap(),
+            vec!["alpha".to_string(), "alpine".to_string()]
+        );
+    }
+}

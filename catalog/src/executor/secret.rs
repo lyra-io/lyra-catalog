@@ -236,3 +236,472 @@ impl SecretExecutor {
             .unwrap_or(DEFAULT_SCHEMA_NAME)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::FaultMetadata;
+    use lyra_meta::metadata::MemoryMetadata;
+    use lyra_meta::proto::pb_catalog::{Connection, Database, Schema, SecretRef};
+
+    async fn seed_schema(metadata: &dyn Metadata, database: &str, schema: &str) {
+        if metadata.get_database(database).await.unwrap().is_none() {
+            metadata
+                .put_database(
+                    Database {
+                        name: database.to_string(),
+                    },
+                    MetadataPutCondition::NotExists,
+                )
+                .await
+                .unwrap();
+        }
+        metadata
+            .put_schema(
+                database,
+                Schema {
+                    name: schema.to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+    }
+
+    fn secret0(name: &str, value: &[u8]) -> Secret {
+        Secret {
+            name: name.to_string(),
+            value: value.to_vec().into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_targets_the_first_or_explicit_schema() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        seed_schema(metadata.as_ref(), "db1", "public").await;
+        seed_schema(metadata.as_ref(), "db1", "other").await;
+        let executor = SecretExecutor::new(metadata.clone());
+
+        assert_eq!(
+            executor
+                .create(
+                    "db1",
+                    &["public".to_string(), "other".to_string()],
+                    &CreateSecret::new(
+                        SecretName::new(None, "s1".to_string()),
+                        b"v".to_vec(),
+                        false
+                    )
+                )
+                .await
+                .unwrap(),
+            CreateSecretOutcome::Created
+        );
+        assert_eq!(
+            executor
+                .create(
+                    "db1",
+                    &["public".to_string()],
+                    &CreateSecret::new(
+                        SecretName::new(Some("other".to_string()), "s2".to_string()),
+                        b"v".to_vec(),
+                        false
+                    )
+                )
+                .await
+                .unwrap(),
+            CreateSecretOutcome::Created
+        );
+        assert!(
+            metadata
+                .get_secret("db1", "public", "s1")
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            metadata
+                .get_secret("db1", "other", "s2")
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn create_rejects_missing_schemas_and_duplicates() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        seed_schema(metadata.as_ref(), "db1", "public").await;
+        metadata
+            .put_secret(
+                "db1",
+                "public",
+                secret0("s1", b"v"),
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = SecretExecutor::new(metadata);
+
+        assert!(matches!(
+            executor
+                .create(
+                    "db1",
+                    &["missing".to_string()],
+                    &CreateSecret::new(
+                        SecretName::new(None, "s".to_string()),
+                        b"v".to_vec(),
+                        false
+                    )
+                )
+                .await,
+            Err(CataError::SchemaNotFound { schema, .. }) if schema == "missing"
+        ));
+        assert_eq!(
+            executor
+                .create(
+                    "db1",
+                    &["public".to_string()],
+                    &CreateSecret::new(SecretName::new(None, "s1".to_string()), b"v".to_vec(), true)
+                )
+                .await
+                .unwrap(),
+            CreateSecretOutcome::AlreadyExists
+        );
+        assert!(matches!(
+            executor
+                .create(
+                    "db1",
+                    &["public".to_string()],
+                    &CreateSecret::new(
+                        SecretName::new(None, "s1".to_string()),
+                        b"v".to_vec(),
+                        false
+                    )
+                )
+                .await,
+            Err(CataError::SecretAlreadyExists(name)) if name == "s1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn create_handles_put_conflicts_and_failures() {
+        let metadata = Arc::new(FaultMetadata::new());
+        seed_schema(metadata.as_ref(), "db1", "public").await;
+        let executor = SecretExecutor::new(metadata.clone());
+
+        metadata.conflict("put_secret");
+        assert_eq!(
+            executor
+                .create(
+                    "db1",
+                    &["public".to_string()],
+                    &CreateSecret::new(SecretName::new(None, "s1".to_string()), b"v".to_vec(), true)
+                )
+                .await
+                .unwrap(),
+            CreateSecretOutcome::AlreadyExists
+        );
+        assert!(matches!(
+            executor
+                .create(
+                    "db1",
+                    &["public".to_string()],
+                    &CreateSecret::new(
+                        SecretName::new(None, "s1".to_string()),
+                        b"v".to_vec(),
+                        false
+                    )
+                )
+                .await,
+            Err(CataError::SecretAlreadyExists(name)) if name == "s1"
+        ));
+
+        metadata.clear("put_secret");
+        metadata.fail("put_secret");
+        assert!(matches!(
+            executor
+                .create(
+                    "db1",
+                    &["public".to_string()],
+                    &CreateSecret::new(
+                        SecretName::new(None, "s1".to_string()),
+                        b"v".to_vec(),
+                        false
+                    )
+                )
+                .await,
+            Err(CataError::Metadata(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn alter_updates_existing_secrets() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        seed_schema(metadata.as_ref(), "db1", "public").await;
+        metadata
+            .put_secret(
+                "db1",
+                "public",
+                secret0("s1", b"old"),
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = SecretExecutor::new(metadata.clone());
+
+        executor
+            .alter(
+                "db1",
+                &["public".to_string()],
+                &AlterSecret::new(SecretName::new(None, "s1".to_string()), b"new".to_vec()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            metadata
+                .get_secret("db1", "public", "s1")
+                .await
+                .unwrap()
+                .unwrap()
+                .value()
+                .value
+                .as_ref(),
+            &b"new"[..]
+        );
+    }
+
+    #[tokio::test]
+    async fn alter_rejects_missing_secrets_and_reports_conflicts() {
+        let metadata = Arc::new(FaultMetadata::new());
+        seed_schema(metadata.as_ref(), "db1", "public").await;
+        let executor = SecretExecutor::new(metadata.clone());
+
+        assert!(matches!(
+            executor
+                .alter(
+                    "db1",
+                    &["public".to_string()],
+                    &AlterSecret::new(
+                        SecretName::new(None, "missing".to_string()),
+                        b"v".to_vec()
+                    )
+                )
+                .await,
+            Err(CataError::SecretNotFound(name)) if name == "missing"
+        ));
+
+        metadata
+            .put_secret(
+                "db1",
+                "public",
+                secret0("s1", b"old"),
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        metadata.conflict("put_secret");
+        assert!(matches!(
+            executor
+                .alter(
+                    "db1",
+                    &["public".to_string()],
+                    &AlterSecret::new(SecretName::new(None, "s1".to_string()), b"new".to_vec())
+                )
+                .await,
+            Err(CataError::SecretChanged(name)) if name == "s1"
+        ));
+
+        metadata.clear("put_secret");
+        metadata.fail("put_secret");
+        assert!(matches!(
+            executor
+                .alter(
+                    "db1",
+                    &["public".to_string()],
+                    &AlterSecret::new(SecretName::new(None, "s1".to_string()), b"new".to_vec())
+                )
+                .await,
+            Err(CataError::Metadata(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn drop_handles_success_and_missing_secrets() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        seed_schema(metadata.as_ref(), "db1", "public").await;
+        metadata
+            .put_secret(
+                "db1",
+                "public",
+                secret0("s1", b"v"),
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = SecretExecutor::new(metadata);
+
+        assert_eq!(
+            executor
+                .drop(
+                    "db1",
+                    &["public".to_string()],
+                    &DropSecret::new(SecretName::new(None, "s1".to_string()), false)
+                )
+                .await
+                .unwrap(),
+            DropSecretOutcome::Dropped
+        );
+        assert_eq!(
+            executor
+                .drop(
+                    "db1",
+                    &["public".to_string()],
+                    &DropSecret::new(SecretName::new(None, "missing".to_string()), true)
+                )
+                .await
+                .unwrap(),
+            DropSecretOutcome::NotFound
+        );
+        assert!(matches!(
+            executor
+                .drop(
+                    "db1",
+                    &["public".to_string()],
+                    &DropSecret::new(SecretName::new(None, "missing".to_string()), false)
+                )
+                .await,
+            Err(CataError::SecretNotFound(name)) if name == "missing"
+        ));
+    }
+
+    #[tokio::test]
+    async fn drop_rejects_in_use_secrets() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        seed_schema(metadata.as_ref(), "db1", "public").await;
+        metadata
+            .put_secret(
+                "db1",
+                "public",
+                secret0("s1", b"v"),
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        metadata
+            .put_connection(
+                "db1",
+                "public",
+                Connection {
+                    name: "conn".to_string(),
+                    options: Default::default(),
+                    secret_refs: vec![SecretRef {
+                        name: "s1".to_string(),
+                        data: "s1".to_string(),
+                    }],
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = SecretExecutor::new(metadata.clone());
+
+        assert!(matches!(
+            executor
+                .drop(
+                    "db1",
+                    &["public".to_string()],
+                    &DropSecret::new(SecretName::new(None, "s1".to_string()), false)
+                )
+                .await,
+            Err(CataError::SecretInUse { secret, connection })
+                if secret == "public.s1" && connection == "conn"
+        ));
+    }
+
+    #[tokio::test]
+    async fn drop_reports_conflicts() {
+        let metadata = Arc::new(FaultMetadata::new());
+        seed_schema(metadata.as_ref(), "db1", "public").await;
+        metadata
+            .put_secret(
+                "db1",
+                "public",
+                secret0("s1", b"v"),
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = SecretExecutor::new(metadata.clone());
+        metadata.conflict("delete_secret");
+        assert!(matches!(
+            executor
+                .drop(
+                    "db1",
+                    &["public".to_string()],
+                    &DropSecret::new(SecretName::new(None, "s1".to_string()), false)
+                )
+                .await,
+            Err(CataError::SecretChanged(name)) if name == "s1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn show_lists_qualified_names_with_optional_like() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        seed_schema(metadata.as_ref(), "db1", "public").await;
+        seed_schema(metadata.as_ref(), "db1", "other").await;
+        metadata
+            .put_secret(
+                "db1",
+                "public",
+                secret0("zeta", b"v"),
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        metadata
+            .put_secret(
+                "db1",
+                "other",
+                secret0("alpha", b"v"),
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = SecretExecutor::new(metadata);
+
+        assert_eq!(
+            executor
+                .show(
+                    "db1",
+                    &["public".to_string(), "other".to_string()],
+                    &ShowSecrets::new(None, None)
+                )
+                .await
+                .unwrap(),
+            vec!["other.alpha".to_string(), "public.zeta".to_string()]
+        );
+        assert_eq!(
+            executor
+                .show(
+                    "db1",
+                    &["public".to_string()],
+                    &ShowSecrets::new(Some("public".to_string()), Some("ze%".to_string()))
+                )
+                .await
+                .unwrap(),
+            vec!["public.zeta".to_string()]
+        );
+        assert!(matches!(
+            executor
+                .show(
+                    "db1",
+                    &["public".to_string()],
+                    &ShowSecrets::new(Some("missing".to_string()), None)
+                )
+                .await,
+            Err(CataError::SchemaNotFound { schema, .. }) if schema == "missing"
+        ));
+    }
+}
