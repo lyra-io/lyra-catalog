@@ -1,0 +1,9 @@
+metadata:
+  oxia:
+    endpoint: "127.0.0.1:6648"
+    namespace: "default"
+postgres:
+  listen: "127.0.0.1:5432"
+# Optional /metrics, /live and /ready listener; never a discovery endpoint.
+health:
+  listen: "127.0.0.1:8080"
