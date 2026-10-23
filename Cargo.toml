@@ -9,7 +9,7 @@ license = "Apache-2.0"
 repository = "https://github.com/lyra-io/lyra-catalog"
 
 [workspace.dependencies]
-lyra-meta = { git = "https://github.com/lyra-io/lyra-meta", rev = "9eb0eedccbdf2695afb5e0d33e8d02a0d9801b76" }
+lyra-meta = { git = "https://github.com/lyra-io/lyra-meta", rev = "d9597ab543eda55b435197ac9e961fc60d351b12" }
 arrow-array = "56.0.0"
 arrow-flight = { version = "56.0.0", features = ["flight-sql"] }
 arrow-schema = "56.0.0"
@@ -29,3 +29,4 @@ toml = "0.9"
 tonic = "0.13"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["v4"] }

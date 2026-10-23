@@ -13,7 +13,7 @@ use datafusion_postgres::pgwire::api::{
     ConnectionManager, PgWireServerHandlers, RandomPidSecretKeyGenerator,
 };
 use lyra_meta::metadata::{Metadata, Registration};
-use lyra_meta::proto::pb_meta::ScramSha256Verifier;
+use lyra_meta::proto::pb_meta::{ComponentRegistration, RegistrationState, ScramSha256Verifier};
 use lyra_meta::utils::verifier::make_verifier;
 use opentelemetry::{global, metrics::Meter};
 use std::sync::atomic::Ordering;
@@ -24,6 +24,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 pub struct Cata {
     // Immutable state
@@ -33,6 +34,7 @@ pub struct Cata {
     manager: Arc<ConnectionManager>,
     pids: Arc<RandomPidSecretKeyGenerator>,
     dummy: ScramSha256Verifier,
+    instance_id: String,
 }
 
 impl Cata {
@@ -52,6 +54,7 @@ impl Cata {
             manager: Arc::new(ConnectionManager::new()),
             pids: Arc::new(RandomPidSecretKeyGenerator::default()),
             dummy: make_verifier("not-a-valid-user-credential")?,
+            instance_id: Uuid::new_v4().to_string(),
         })
     }
     pub fn cancellation(&self) -> CancellationToken {
@@ -65,7 +68,20 @@ impl Cata {
         self.start_with_listener(listener).await
     }
     pub async fn start_with_listener(self: Arc<Self>, listener: TcpListener) -> Result<()> {
-        let registration = self.state.metadata.register_component("catalog").await?;
+        let registration_value = ComponentRegistration {
+            format_version: 1,
+            instance_id: self.instance_id.clone(),
+            state: RegistrationState::Ready as i32,
+            pg_endpoint: self.options.listen.clone(),
+            connection_capacity: Some(self.options.max_connections as u32),
+            active_connections: 0,
+            in_flight_requests: 0,
+        };
+        let registration = self
+            .state
+            .metadata
+            .register_component("catalog", registration_value.clone())
+            .await?;
         self.state.set_ready(true);
         tracing::info!(
             operation = "start",
@@ -73,7 +89,8 @@ impl Cata {
             "catalog listener ready"
         );
         let state = Arc::clone(&self.state);
-        let discovery = tokio::spawn(async move { discovery(state, registration).await });
+        let discovery =
+            tokio::spawn(async move { discovery(state, registration, registration_value).await });
         let capacity = Arc::new(Semaphore::new(self.options.max_connections.max(1)));
         let mut connections = JoinSet::new();
         let outcome = loop {
@@ -156,7 +173,7 @@ impl PgWireServerHandlers for Factory {
     }
 }
 
-async fn discovery(state: Arc<State>, initial: Registration) {
+async fn discovery(state: Arc<State>, initial: Registration, value: ComponentRegistration) {
     let mut registration = Some(initial);
     loop {
         tokio::select! {
@@ -175,7 +192,11 @@ async fn discovery(state: Arc<State>, initial: Registration) {
             );
             registration = None;
         }
-        if let Ok(next) = state.metadata.register_component("catalog").await {
+        if let Ok(next) = state
+            .metadata
+            .register_component("catalog", value.clone())
+            .await
+        {
             registration = Some(next);
             state.set_ready(true);
             tracing::info!(
@@ -187,6 +208,9 @@ async fn discovery(state: Arc<State>, initial: Registration) {
     }
     state.set_ready(false);
     if let Some(current) = registration {
+        let mut draining = value.clone();
+        draining.state = RegistrationState::Draining as i32;
+        let _ = timeout(Duration::from_secs(5), current.publish(draining)).await;
         let _ = timeout(Duration::from_secs(5), current.unregister()).await;
     }
 }
