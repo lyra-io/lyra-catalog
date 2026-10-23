@@ -25,3 +25,13 @@ pub fn print_banner(role: &str) {
     );
     println!();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prints_a_banner_for_the_given_role() {
+        print_banner("catalog");
+    }
+}

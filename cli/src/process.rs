@@ -64,3 +64,41 @@ pub fn send_sigterm(pid: i32) -> Result<(), Box<dyn std::error::Error>> {
         Err("stop command is only supported on Unix systems".into())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writes_reads_and_removes_pid_files() {
+        let path = std::env::temp_dir().join(format!("lyra-catalog-test-{}.pid", std::process::id()));
+
+        write_pid_file(path.to_str().unwrap()).unwrap();
+        let pid = read_pid_file(path.to_str().unwrap()).unwrap();
+        assert_eq!(pid, std::process::id() as i32);
+
+        remove_pid_file(path.to_str().unwrap());
+        remove_pid_file(path.to_str().unwrap());
+        assert!(read_pid_file(path.to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_pid_files() {
+        let path = std::env::temp_dir().join(format!("lyra-catalog-invalid-{}.pid", std::process::id()));
+        std::fs::write(&path, "not-a-number").unwrap();
+        assert!(read_pid_file(path.to_str().unwrap()).is_err());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn signals_running_and_missing_processes() {
+        let child = std::process::Command::new("sleep")
+            .arg("5")
+            .spawn()
+            .unwrap();
+        send_sigterm(child.id() as i32).unwrap();
+        let _ = child.wait_with_output();
+
+        assert!(send_sigterm(i32::MAX).is_err());
+    }
+}

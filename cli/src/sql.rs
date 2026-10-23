@@ -261,3 +261,114 @@ fn read_config(path: &str) -> Result<SqlConfig, Box<dyn std::error::Error>> {
     toml::from_str(&contents)
         .map_err(|error| format!("failed to parse config file '{}': {}", path, error).into())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_array::NullArray;
+    use arrow_schema::{DataType, Field, Schema};
+    use std::sync::{Arc, Mutex};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn normalizes_endpoints() {
+        assert_eq!(normalize_endpoint("http://localhost:1"), "http://localhost:1");
+        assert_eq!(normalize_endpoint("https://localhost:1"), "https://localhost:1");
+        assert_eq!(normalize_endpoint("localhost:1"), "http://localhost:1");
+    }
+
+    #[test]
+    fn formats_array_values() {
+        let nulls = StringArray::from(vec![Option::<&str>::None]);
+        assert_eq!(value_to_string(&nulls, 0), "NULL");
+
+        assert_eq!(
+            value_to_string(&StringArray::from(vec!["hello"]), 0),
+            "hello"
+        );
+        assert_eq!(value_to_string(&Int32Array::from(vec![42]), 0), "42");
+        assert_eq!(value_to_string(&Int64Array::from(vec![42]), 0), "42");
+        assert_eq!(value_to_string(&UInt64Array::from(vec![42]), 0), "42");
+        assert_eq!(value_to_string(&Float32Array::from(vec![1.5]), 0), "1.5");
+        assert_eq!(value_to_string(&Float64Array::from(vec![1.5]), 0), "1.5");
+        assert_eq!(value_to_string(&BooleanArray::from(vec![true]), 0), "true");
+        assert_eq!(
+            value_to_string(&BinaryArray::from(vec![&b"abc"[..]]), 0),
+            "abc"
+        );
+        assert_eq!(value_to_string(&NullArray::new(1), 0), "<Null>");
+    }
+
+    #[test]
+    fn prints_batches() {
+        let schema = Arc::new(Schema::new(vec![Field::new("a", DataType::Utf8, true)]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(StringArray::from(vec!["x", "y"]))],
+        )
+        .unwrap();
+        print_batches(&[batch]);
+    }
+
+    #[test]
+    fn resolves_config_paths() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        assert_eq!(
+            resolve_config_path(Some("/tmp/custom.toml")),
+            Some("/tmp/custom.toml".to_string())
+        );
+
+        unsafe { std::env::set_var("LYRA_SQL_CONFIG", "/tmp/lyra-sql.toml") };
+        assert_eq!(
+            resolve_config_path(None),
+            Some("/tmp/lyra-sql.toml".to_string())
+        );
+        unsafe { std::env::remove_var("LYRA_SQL_CONFIG") };
+
+        unsafe { std::env::set_var("LYRA_CONFIG", "/tmp/lyra.toml") };
+        assert_eq!(
+            resolve_config_path(None),
+            Some("/tmp/lyra.toml".to_string())
+        );
+        unsafe { std::env::remove_var("LYRA_CONFIG") };
+
+        assert_eq!(resolve_config_path(None), None);
+    }
+
+    #[test]
+    fn loads_defaults_and_config_files() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::remove_var("LYRA_SQL_CONFIG");
+            std::env::remove_var("LYRA_CONFIG");
+        }
+        let config = load_config(None).unwrap();
+        assert_eq!(config.sql.endpoint, "http://127.0.0.1:50051");
+        assert_eq!(config.log.level, "info");
+
+        let path = std::env::temp_dir().join(format!("lyra-sql-{}.toml", std::process::id()));
+        std::fs::write(
+            &path,
+            r#"
+                [sql]
+                endpoint = "http://localhost:9999"
+
+                [log]
+                level = "debug"
+            "#,
+        )
+        .unwrap();
+        let config = load_config(Some(path.to_str().unwrap())).unwrap();
+        assert_eq!(config.sql.endpoint, "http://localhost:9999");
+        assert_eq!(config.log.level, "debug");
+        std::fs::remove_file(&path).unwrap();
+
+        assert!(load_config(Some("/tmp/does-not-exist.toml")).is_err());
+
+        let bad = std::env::temp_dir().join(format!("lyra-sql-bad-{}.toml", std::process::id()));
+        std::fs::write(&bad, "not: [valid").unwrap();
+        assert!(load_config(Some(bad.to_str().unwrap())).is_err());
+        std::fs::remove_file(&bad).unwrap();
+    }
+}

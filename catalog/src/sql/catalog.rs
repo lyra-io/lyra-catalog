@@ -162,3 +162,85 @@ impl TableProvider for RwUsersTable {
         )?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::FaultMetadata;
+    use datafusion_pg_catalog::pg_catalog::context::PgCatalogContextProvider;
+    use lyra_meta::metadata::{MemoryMetadata, MetadataPutCondition};
+    use lyra_meta::proto::pb_catalog::User;
+    use lyra_meta::utils::scram::make_scram_value;
+
+    async fn metadata0() -> Arc<MemoryMetadata> {
+        let metadata = Arc::new(MemoryMetadata::new());
+        for (name, password) in [("zeta", None), ("alice", Some("s3cr3t"))] {
+            metadata
+                .put_user(
+                    User {
+                        name: name.to_string(),
+                        password: password.map(|value| make_scram_value(value)),
+                    },
+                    MetadataPutCondition::NotExists,
+                )
+                .await
+                .unwrap();
+        }
+        metadata
+    }
+
+    #[tokio::test]
+    async fn exposes_sorted_roles_and_single_role_lookups() {
+        let provider = CatalogContextProvider::new(metadata0().await);
+
+        assert_eq!(
+            provider.roles().await,
+            vec!["alice".to_string(), "zeta".to_string()]
+        );
+        assert!(provider.role("missing").await.is_none());
+        let alice = provider.role("alice").await.unwrap();
+        assert!(alice.can_login);
+        let zeta = provider.role("zeta").await.unwrap();
+        assert!(!zeta.can_login);
+    }
+
+    #[tokio::test]
+    async fn role_lookups_swallow_metadata_errors() {
+        let metadata = Arc::new(FaultMetadata::new());
+        metadata.fail("get_user");
+        let provider = CatalogContextProvider::new(metadata);
+
+        assert!(provider.role("alice").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn scans_users_through_datafusion() {
+        let config = datafusion::prelude::SessionConfig::new()
+            .with_default_catalog_and_schema("dev", "public");
+        let context = SessionContext::new_with_config(config);
+        register_rw_catalog(&context, "dev", metadata0().await).unwrap();
+
+        let batches = context
+            .sql("SELECT name, can_login FROM rw_catalog.rw_users ORDER BY name LIMIT 1")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let names = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(names.value(0), "alice");
+    }
+
+    #[test]
+    fn debug_output_does_not_leak_metadata() {
+        let table = RwUsersTable::new(Arc::new(MemoryMetadata::new()));
+        assert_eq!(format!("{table:?}"), "RwUsersTable { .. }");
+
+        let provider = CatalogContextProvider::new(Arc::new(MemoryMetadata::new()));
+        assert_eq!(format!("{provider:?}"), "CatalogContextProvider { .. }");
+    }
+}

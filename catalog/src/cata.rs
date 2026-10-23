@@ -152,6 +152,7 @@ impl PgWireServerHandlers for Cata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::FaultMetadata;
     use lyra_meta::metadata::MemoryMetadata;
 
     #[tokio::test]
@@ -189,5 +190,110 @@ mod tests {
             result,
             Err(crate::CataError::BootstrapUserRequired)
         ));
+    }
+
+    #[tokio::test]
+    async fn skips_bootstrap_when_a_user_or_catalog_already_exists() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        metadata
+            .put_user(
+                User {
+                    name: "root".to_string(),
+                    password: Some(make_scram_value("s3cr3t")),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        metadata
+            .put_database(
+                Database {
+                    name: DEFAULT_DATABASE_NAME.to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        metadata
+            .put_schema(
+                DEFAULT_DATABASE_NAME,
+                Schema {
+                    name: DEFAULT_SCHEMA_NAME.to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+
+        let cata = Cata::new(
+            CataOptions::default().with_bootstrap_user("root", "s3cr3t"),
+            metadata.clone(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            metadata
+                .get_user("root")
+                .await
+                .unwrap()
+                .unwrap()
+                .value()
+                .name,
+            "root"
+        );
+        let _ = cata;
+    }
+
+    #[tokio::test]
+    async fn bootstrap_user_conflict_still_requires_a_user() {
+        let metadata = Arc::new(FaultMetadata::new());
+        metadata.conflict("put_user");
+        let result = Cata::new(
+            CataOptions::default().with_bootstrap_user("root", "s3cr3t"),
+            metadata,
+        )
+        .await;
+
+        assert!(matches!(result, Err(crate::CataError::BootstrapUserRequired)));
+    }
+
+    #[tokio::test]
+    async fn bootstrap_user_failures_propagate() {
+        let metadata = Arc::new(FaultMetadata::new());
+        metadata.fail("put_user");
+        let result = Cata::new(
+            CataOptions::default().with_bootstrap_user("root", "s3cr3t"),
+            metadata,
+        )
+        .await;
+
+        assert!(matches!(result, Err(crate::CataError::Metadata(_))));
+    }
+
+    #[tokio::test]
+    async fn exposes_pgwire_handlers() {
+        let metadata = Arc::new(MemoryMetadata::new());
+        metadata
+            .put_user(
+                User {
+                    name: "root".to_string(),
+                    password: Some(make_scram_value("s3cr3t")),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let cata = Cata::new(
+            CataOptions::default().with_bootstrap_user("root", "s3cr3t"),
+            metadata,
+        )
+        .await
+        .unwrap();
+
+        let _ = cata.simple_query_handler();
+        let _ = cata.extended_query_handler();
+        let _ = cata.startup_handler();
+        let _ = cata.cancel_handler();
     }
 }

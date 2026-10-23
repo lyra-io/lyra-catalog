@@ -220,9 +220,10 @@ impl UserExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::FaultMetadata;
     use lyra_meta::metadata::{DEFAULT_DATABASE_NAME, DEFAULT_SCHEMA_NAME, MemoryMetadata};
     use lyra_meta::proto::pb_catalog::{Schema, Secret};
-    use lyra_meta::utils::scram::{as_scram, verify_scram};
+    use lyra_meta::utils::scram::{as_scram, make_scram, verify_scram};
 
     async fn metadata0() -> Arc<MemoryMetadata> {
         let metadata = Arc::new(MemoryMetadata::new());
@@ -345,5 +346,441 @@ mod tests {
             result,
             Err(CataError::InvalidPasswordSecret(name)) if name == "login_password"
         ));
+    }
+
+    #[tokio::test]
+    async fn create_rejects_duplicate_users_and_conflicts() {
+        let metadata = metadata0().await;
+        let executor = UserExecutor::new(metadata.clone());
+        executor
+            .create(
+                DEFAULT_DATABASE_NAME,
+                &[DEFAULT_SCHEMA_NAME.to_string()],
+                &CreateUser::new("alice".to_string(), Value::Literal("password".to_string())),
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            executor
+                .create(
+                    DEFAULT_DATABASE_NAME,
+                    &[DEFAULT_SCHEMA_NAME.to_string()],
+                    &CreateUser::new("alice".to_string(), Value::Literal("password".to_string()))
+                )
+                .await,
+            Err(CataError::UserAlreadyExists(name)) if name == "alice"
+        ));
+
+        let fault = Arc::new(FaultMetadata::new());
+        fault
+            .put_schema(
+                DEFAULT_DATABASE_NAME,
+                Schema {
+                    name: DEFAULT_SCHEMA_NAME.to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = UserExecutor::new(fault.clone());
+        fault.conflict("put_user");
+        assert!(matches!(
+            executor
+                .create(
+                    DEFAULT_DATABASE_NAME,
+                    &[DEFAULT_SCHEMA_NAME.to_string()],
+                    &CreateUser::new("alice".to_string(), Value::Null)
+                )
+                .await,
+            Err(CataError::UserAlreadyExists(name)) if name == "alice"
+        ));
+    }
+
+    #[tokio::test]
+    async fn alter_renames_users() {
+        let metadata = metadata0().await;
+        let executor = UserExecutor::new(metadata.clone());
+        executor
+            .create(
+                DEFAULT_DATABASE_NAME,
+                &[DEFAULT_SCHEMA_NAME.to_string()],
+                &CreateUser::new("alice".to_string(), Value::Literal("password".to_string())),
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            executor
+                .alter(
+                    DEFAULT_DATABASE_NAME,
+                    &[DEFAULT_SCHEMA_NAME.to_string()],
+                    None,
+                    &AlterUser::new("missing".to_string(), AlterUserAction::Rename("bob".to_string()))
+                )
+                .await,
+            Err(CataError::UserNotFound(name)) if name == "missing"
+        ));
+        assert!(matches!(
+            executor
+                .alter(
+                    DEFAULT_DATABASE_NAME,
+                    &[DEFAULT_SCHEMA_NAME.to_string()],
+                    Some("alice"),
+                    &AlterUser::new("alice".to_string(), AlterUserAction::Rename("bob".to_string()))
+                )
+                .await,
+            Err(CataError::UserInUse(name)) if name == "alice"
+        ));
+
+        executor
+            .alter(
+                DEFAULT_DATABASE_NAME,
+                &[DEFAULT_SCHEMA_NAME.to_string()],
+                None,
+                &AlterUser::new("alice".to_string(), AlterUserAction::Rename("bob".to_string())),
+            )
+            .await
+            .unwrap();
+        assert!(metadata.get_user("alice").await.unwrap().is_none());
+        assert!(metadata.get_user("bob").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn alter_rename_rejects_existing_targets_and_conflicts() {
+        let metadata = metadata0().await;
+        for name in ["alice", "bob"] {
+            metadata
+                .put_user(
+                    lyra_meta::proto::pb_catalog::User {
+                        name: name.to_string(),
+                        password: None,
+                    },
+                    MetadataPutCondition::NotExists,
+                )
+                .await
+                .unwrap();
+        }
+        let executor = UserExecutor::new(metadata.clone());
+        assert!(matches!(
+            executor
+                .alter(
+                    DEFAULT_DATABASE_NAME,
+                    &[DEFAULT_SCHEMA_NAME.to_string()],
+                    None,
+                    &AlterUser::new("alice".to_string(), AlterUserAction::Rename("bob".to_string()))
+                )
+                .await,
+            Err(CataError::UserAlreadyExists(name)) if name == "bob"
+        ));
+
+        let fault = Arc::new(FaultMetadata::new());
+        fault
+            .put_schema(
+                DEFAULT_DATABASE_NAME,
+                Schema {
+                    name: DEFAULT_SCHEMA_NAME.to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        fault
+            .put_user(
+                lyra_meta::proto::pb_catalog::User {
+                    name: "alice".to_string(),
+                    password: None,
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = UserExecutor::new(fault.clone());
+        fault.conflict("rename_user");
+        assert!(matches!(
+            executor
+                .alter(
+                    DEFAULT_DATABASE_NAME,
+                    &[DEFAULT_SCHEMA_NAME.to_string()],
+                    None,
+                    &AlterUser::new("alice".to_string(), AlterUserAction::Rename("bob".to_string()))
+                )
+                .await,
+            Err(CataError::UserChanged(name)) if name == "alice"
+        ));
+    }
+
+    #[tokio::test]
+    async fn alter_password_updates_and_reports_conflicts() {
+        let metadata = metadata0().await;
+        let executor = UserExecutor::new(metadata.clone());
+        executor
+            .create(
+                DEFAULT_DATABASE_NAME,
+                &[DEFAULT_SCHEMA_NAME.to_string()],
+                &CreateUser::new("alice".to_string(), Value::Null),
+            )
+            .await
+            .unwrap();
+        executor
+            .alter(
+                DEFAULT_DATABASE_NAME,
+                &[DEFAULT_SCHEMA_NAME.to_string()],
+                None,
+                &AlterUser::new(
+                    "alice".to_string(),
+                    AlterUserAction::Password(Value::Literal("new-password".to_string())),
+                ),
+            )
+            .await
+            .unwrap();
+        let user = metadata.get_user("alice").await.unwrap().unwrap();
+        let scram = user.value().password.as_ref().and_then(as_scram).unwrap();
+        assert!(verify_scram("new-password", scram));
+
+        let fault = Arc::new(FaultMetadata::new());
+        fault
+            .put_schema(
+                DEFAULT_DATABASE_NAME,
+                Schema {
+                    name: DEFAULT_SCHEMA_NAME.to_string(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        fault
+            .put_user(
+                lyra_meta::proto::pb_catalog::User {
+                    name: "alice".to_string(),
+                    password: None,
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = UserExecutor::new(fault.clone());
+        fault.conflict("put_user");
+        assert!(matches!(
+            executor
+                .alter(
+                    DEFAULT_DATABASE_NAME,
+                    &[DEFAULT_SCHEMA_NAME.to_string()],
+                    None,
+                    &AlterUser::new(
+                        "alice".to_string(),
+                        AlterUserAction::Password(Value::Literal("new-password".to_string()))
+                    )
+                )
+                .await,
+            Err(CataError::UserChanged(name)) if name == "alice"
+        ));
+    }
+
+    #[tokio::test]
+    async fn drop_handles_current_users_duplicates_and_missing() {
+        let metadata = metadata0().await;
+        for name in ["alice", "bob"] {
+            metadata
+                .put_user(
+                    lyra_meta::proto::pb_catalog::User {
+                        name: name.to_string(),
+                        password: None,
+                    },
+                    MetadataPutCondition::NotExists,
+                )
+                .await
+                .unwrap();
+        }
+        let executor = UserExecutor::new(metadata);
+
+        assert!(matches!(
+            executor
+                .drop(Some("alice"), &DropUser::new(vec!["alice".to_string()], false))
+                .await,
+            Err(CataError::UserInUse(name)) if name == "alice"
+        ));
+        assert!(matches!(
+            executor
+                .drop(
+                    None,
+                    &DropUser::new(vec!["missing".to_string(), "bob".to_string()], false)
+                )
+                .await,
+            Err(CataError::UserNotFound(name)) if name == "missing"
+        ));
+        assert_eq!(
+            executor
+                .drop(
+                    None,
+                    &DropUser::new(vec!["missing".to_string()], true)
+                )
+                .await
+                .unwrap(),
+            DropUserOutcome::NotFound
+        );
+        assert_eq!(
+            executor
+                .drop(
+                    None,
+                    &DropUser::new(
+                        vec!["alice".to_string(), "alice".to_string(), "bob".to_string()],
+                        false
+                    )
+                )
+                .await
+                .unwrap(),
+            DropUserOutcome::Dropped
+        );
+    }
+
+    #[tokio::test]
+    async fn drop_reports_conflicts() {
+        let fault = Arc::new(FaultMetadata::new());
+        fault
+            .put_user(
+                lyra_meta::proto::pb_catalog::User {
+                    name: "alice".to_string(),
+                    password: None,
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = UserExecutor::new(fault.clone());
+        fault.conflict("delete_users");
+        assert!(matches!(
+            executor
+                .drop(None, &DropUser::new(vec!["alice".to_string()], false))
+                .await,
+            Err(CataError::UserChanged(name)) if name == "alice"
+        ));
+    }
+
+    #[tokio::test]
+    async fn show_lists_users_with_optional_like() {
+        let metadata = metadata0().await;
+        for name in ["zeta", "alpha", "alpine"] {
+            metadata
+                .put_user(
+                    lyra_meta::proto::pb_catalog::User {
+                        name: name.to_string(),
+                        password: None,
+                    },
+                    MetadataPutCondition::NotExists,
+                )
+                .await
+                .unwrap();
+        }
+        let executor = UserExecutor::new(metadata);
+        assert_eq!(
+            executor.show(&ShowUsers::new(None)).await.unwrap(),
+            vec!["alpha".to_string(), "alpine".to_string(), "zeta".to_string()]
+        );
+        assert_eq!(
+            executor
+                .show(&ShowUsers::new(Some("alp%".to_string())))
+                .await
+                .unwrap(),
+            vec!["alpha".to_string(), "alpine".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn stores_null_and_scram_passwords_unchanged() {
+        let metadata = metadata0().await;
+        let executor = UserExecutor::new(metadata.clone());
+
+        executor
+            .create(
+                DEFAULT_DATABASE_NAME,
+                &[DEFAULT_SCHEMA_NAME.to_string()],
+                &CreateUser::new("null_user".to_string(), Value::Null),
+            )
+            .await
+            .unwrap();
+        assert!(
+            metadata
+                .get_user("null_user")
+                .await
+                .unwrap()
+                .unwrap()
+                .value()
+                .password
+                .is_none()
+        );
+
+        let scram = make_scram("password");
+        executor
+            .create(
+                DEFAULT_DATABASE_NAME,
+                &[DEFAULT_SCHEMA_NAME.to_string()],
+                &CreateUser::new("scram_user".to_string(), Value::Scram(scram.clone())),
+            )
+            .await
+            .unwrap();
+        let stored = metadata
+            .get_user("scram_user")
+            .await
+            .unwrap()
+            .unwrap()
+            .value()
+            .password
+            .as_ref()
+            .and_then(as_scram)
+            .unwrap()
+            .clone();
+        assert_eq!(stored, scram);
+    }
+
+    #[tokio::test]
+    async fn explicit_schema_secrets_are_resolved_or_rejected() {
+        let metadata = metadata0().await;
+        metadata
+            .put_secret(
+                DEFAULT_DATABASE_NAME,
+                DEFAULT_SCHEMA_NAME,
+                Secret {
+                    name: "login_password".to_string(),
+                    value: b"password".to_vec().into(),
+                },
+                MetadataPutCondition::NotExists,
+            )
+            .await
+            .unwrap();
+        let executor = UserExecutor::new(metadata.clone());
+
+        assert!(matches!(
+            executor
+                .create(
+                    DEFAULT_DATABASE_NAME,
+                    &[DEFAULT_SCHEMA_NAME.to_string()],
+                    &CreateUser::new(
+                        "alice".to_string(),
+                        Value::Secret(SecretName::new(
+                            Some("missing".to_string()),
+                            "login_password".to_string()
+                        ))
+                    )
+                )
+                .await,
+            Err(CataError::SchemaNotFound { schema, .. }) if schema == "missing"
+        ));
+
+        executor
+            .create(
+                DEFAULT_DATABASE_NAME,
+                &[DEFAULT_SCHEMA_NAME.to_string()],
+                &CreateUser::new(
+                    "alice".to_string(),
+                    Value::Secret(SecretName::new(
+                        Some(DEFAULT_SCHEMA_NAME.to_string()),
+                        "login_password".to_string(),
+                    )),
+                ),
+            )
+            .await
+            .unwrap();
+        assert!(metadata.get_user("alice").await.unwrap().is_some());
     }
 }

@@ -13,3 +13,6 @@ mod sql;
 
 pub use cata::Cata;
 pub use error::{CataError, Result};
+
+#[cfg(test)]
+mod test_support;

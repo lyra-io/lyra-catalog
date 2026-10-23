@@ -40,3 +40,49 @@ where
 {
     client.metadata().get(METADATA_USER).map(String::as_str)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use datafusion_postgres::pgwire::api::{METADATA_DATABASE, METADATA_USER};
+    use datafusion_postgres::testing::MockClient;
+
+    #[test]
+    fn resolves_defaults_when_metadata_is_absent() {
+        let client = MockClient::new();
+        assert_eq!(client_database(&client), DEFAULT_DATABASE_NAME);
+        assert_eq!(
+            client_schemas(&client),
+            vec![DEFAULT_SCHEMA_NAME.to_string()]
+        );
+        assert_eq!(client_user(&client), Some("postgres"));
+    }
+
+    #[test]
+    fn reads_database_and_user_from_metadata() {
+        let mut client = MockClient::new();
+        client
+            .metadata_mut()
+            .insert(METADATA_DATABASE.to_string(), "analytics".to_string());
+        client
+            .metadata_mut()
+            .insert(METADATA_USER.to_string(), "alice".to_string());
+
+        assert_eq!(client_database(&client), "analytics");
+        assert_eq!(client_user(&client), Some("alice"));
+    }
+
+    #[test]
+    fn parses_search_path_and_skips_sentinel_values() {
+        let mut client = MockClient::new();
+        client.metadata_mut().insert(
+            "search_path".to_string(),
+            "\"public\", other, $user, , \"\"".to_string(),
+        );
+
+        assert_eq!(
+            client_schemas(&client),
+            vec!["public".to_string(), "other".to_string()]
+        );
+    }
+}
