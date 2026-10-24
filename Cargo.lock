@@ -2502,7 +2502,6 @@ dependencies = [
  "tokio-postgres",
  "tokio-util",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -2534,7 +2533,7 @@ dependencies = [
 [[package]]
 name = "lyra-meta"
 version = "0.1.0"
-source = "git+https://github.com/lyra-io/lyra-meta?rev=d9597ab543eda55b435197ac9e961fc60d351b12#d9597ab543eda55b435197ac9e961fc60d351b12"
+source = "git+https://github.com/lyra-io/lyra-meta?rev=86893c84a76d9ffbc8815ea97c43ced92569e071#86893c84a76d9ffbc8815ea97c43ced92569e071"
 dependencies = [
  "async-trait",
  "futures-util",

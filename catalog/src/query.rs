@@ -116,16 +116,22 @@ impl Query {
                 response.set_command_tag("SHOW");
                 return Ok(Response::Query(response));
             }
-            command @ (Command::Create { .. } | Command::Alter { .. } | Command::Drop { .. }) => {
+            command @ (Command::Create { .. }
+            | Command::CreateFormat { .. }
+            | Command::CreateStream { .. }
+            | Command::Alter { .. }
+            | Command::Drop { .. }) => {
                 if client.transaction_status() != TransactionStatus::Idle {
                     return Err(CataError::sql(
                         "25001",
-                        "database DDL cannot run inside a transaction block",
+                        "DDL cannot run inside a transaction block",
                     )
                     .into());
                 }
                 let (tag, duplicate_code) = match command {
                     Command::Create { .. } => ("CREATE DATABASE", "42P04"),
+                    Command::CreateFormat { .. } => ("CREATE FORMAT", "42P04"),
+                    Command::CreateStream { .. } => ("CREATE STREAM", "42P04"),
                     Command::Alter { .. } => ("ALTER DATABASE", "00000"),
                     _ => ("DROP DATABASE", "3D000"),
                 };
