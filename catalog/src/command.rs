@@ -14,6 +14,18 @@ pub(crate) enum Command {
         if_not_exists: bool,
         options: Options,
     },
+    CreateFormat {
+        name: String,
+        if_not_exists: bool,
+        format_type: i32,
+        definition: String,
+    },
+    CreateStream {
+        name: String,
+        if_not_exists: bool,
+        format: Option<String>,
+        replication: Option<u32>,
+    },
     Alter {
         name: String,
         action: Alter,
@@ -170,8 +182,90 @@ impl Tokens {
         }
         Ok(options)
     }
+    fn create_format(&mut self) -> Result<Command> {
+        let if_not_exists = self.word("IF");
+        if if_not_exists {
+            self.expect("NOT")?;
+            self.expect("EXISTS")?;
+        }
+        let name = self.name()?;
+        self.expect("TYPE")?;
+        let format_type = match self.next() {
+            Token::Word(word) if word.quote_style.is_none() => {
+                match word.value.to_ascii_uppercase().as_str() {
+                    "AVRO" => 0,
+                    "PROTOBUF" => 1,
+                    "JSON" => 2,
+                    _ => return Err(unsupported()),
+                }
+            }
+            _ => return Err(syntax()),
+        };
+        self.expect("AS")?;
+        let definition = match self.next() {
+            Token::SingleQuotedString(value) => value,
+            _ => return Err(syntax()),
+        };
+        Ok(Command::CreateFormat {
+            name,
+            if_not_exists,
+            format_type,
+            definition,
+        })
+    }
+    fn create_stream(&mut self) -> Result<Command> {
+        let if_not_exists = self.word("IF");
+        if if_not_exists {
+            self.expect("NOT")?;
+            self.expect("EXISTS")?;
+        }
+        let name = self.name()?;
+        let mut format = None;
+        let mut replication = None;
+        if self.word("WITH") {
+            let mut seen = HashSet::new();
+            while self.peek() != &Token::EOF {
+                let Token::Word(word) = self.next() else {
+                    return Err(syntax());
+                };
+                if word.quote_style.is_some() {
+                    return Err(syntax());
+                }
+                let key = word.value.to_ascii_uppercase();
+                if !seen.insert(key.clone()) {
+                    return Err(syntax());
+                }
+                self.consume(Token::Eq);
+                match key.as_str() {
+                    "FORMAT" => {
+                        format = Some(self.name()?);
+                    }
+                    "REPLICATION" => {
+                        let value = self.literal()?.parse::<u32>().map_err(|_| invalid())?;
+                        if value == 0 {
+                            return Err(invalid());
+                        }
+                        replication = Some(value);
+                    }
+                    _ => return Err(unsupported()),
+                }
+            }
+        }
+        Ok(Command::CreateStream {
+            name,
+            if_not_exists,
+            format,
+            replication,
+        })
+    }
     fn command(&mut self) -> Result<Command> {
         if self.word("CREATE") {
+            if self.word("FORMAT") {
+                return self.create_format();
+            }
+            if self.word("STREAM") {
+                return self.create_stream();
+            }
             self.expect("DATABASE").map_err(|_| unsupported())?;
             let if_not_exists = self.word("IF");
             if if_not_exists {
@@ -411,5 +505,27 @@ mod tests {
             panic!()
         };
         assert_eq!(name.len(), 62);
+    }
+
+    #[test]
+    fn format_and_stream_grammar() {
+        for sql in [
+            "CREATE FORMAT order_fmt TYPE avro AS '{\"type\":\"record\"}'",
+            "CREATE FORMAT IF NOT EXISTS f TYPE protobuf AS 'x'",
+            "CREATE STREAM orders WITH format = order_fmt replication = 2",
+            "CREATE STREAM events",
+            "CREATE STREAM IF NOT EXISTS events WITH replication = 3",
+        ] {
+            assert!(parse(sql).is_ok(), "{sql}");
+        }
+        for sql in [
+            "CREATE FORMAT x TYPE unknown AS 'x'",
+            "CREATE FORMAT x TYPE avro",
+            "CREATE STREAM x WITH partitions = 1",
+            "CREATE STREAM x WITH replication = 0",
+            "CREATE STREAM x WITH format = a format = b",
+        ] {
+            assert!(parse(sql).is_err(), "{sql}");
+        }
     }
 }

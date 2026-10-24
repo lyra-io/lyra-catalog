@@ -2534,7 +2534,7 @@ dependencies = [
 [[package]]
 name = "lyra-meta"
 version = "0.1.0"
-source = "git+https://github.com/lyra-io/lyra-meta?rev=d9597ab543eda55b435197ac9e961fc60d351b12#d9597ab543eda55b435197ac9e961fc60d351b12"
+source = "git+https://github.com/lyra-io/lyra-meta?rev=ac2fe9f64f2b54d2cfca7355dd36f9608ddb43a9#ac2fe9f64f2b54d2cfca7355dd36f9608ddb43a9"
 dependencies = [
  "async-trait",
  "futures-util",
