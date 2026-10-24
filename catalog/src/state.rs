@@ -1,7 +1,7 @@
 use crate::command::{Alter, Command};
 use crate::telemetry::Metrics;
 use crate::{CataError, Result};
-use lyra_meta::metadata::{Metadata, MetadataError, SYSTEM_DATABASE_NAME};
+use lyra_meta::metadata::{DEFAULT_SCHEMA_NAME, Metadata, MetadataError, SYSTEM_DATABASE_NAME};
 use lyra_meta::proto::pb_meta::{Database, DatabaseState, Format, Stream};
 use opentelemetry::metrics::Meter;
 use std::collections::HashMap;
@@ -267,14 +267,24 @@ impl State {
                 format_type,
                 definition,
             } => {
-                if self.metadata.get_format(&name).await?.is_some() {
+                if self
+                    .metadata
+                    .get_format(current_database, &name)
+                    .await?
+                    .is_some()
+                {
                     return if if_not_exists {
                         Ok(false)
                     } else {
                         Err(MetadataError::AlreadyExists.into())
                     };
                 }
-                let value = Format::new(name, format_type, definition.as_bytes().to_vec());
+                let value = Format::new(
+                    current_database,
+                    name,
+                    format_type,
+                    definition.as_bytes().to_vec(),
+                );
                 self.metadata.create_format(value).await?;
                 Ok(true)
             }
@@ -284,7 +294,12 @@ impl State {
                 format,
                 replication,
             } => {
-                if self.metadata.get_stream(&name).await?.is_some() {
+                if self
+                    .metadata
+                    .get_stream(current_database, DEFAULT_SCHEMA_NAME, &name)
+                    .await?
+                    .is_some()
+                {
                     return if if_not_exists {
                         Ok(false)
                     } else {
@@ -292,11 +307,15 @@ impl State {
                     };
                 }
                 if let Some(format_name) = &format
-                    && self.metadata.get_format(format_name).await?.is_none()
+                    && self
+                        .metadata
+                        .get_format(current_database, format_name)
+                        .await?
+                        .is_none()
                 {
                     return Err(CataError::sql("42704", "format does not exist"));
                 }
-                let mut value = Stream::new(name);
+                let mut value = Stream::new(current_database, DEFAULT_SCHEMA_NAME, name);
                 value.format_name = format;
                 value.replication = replication;
                 self.metadata.create_stream(value).await?;
