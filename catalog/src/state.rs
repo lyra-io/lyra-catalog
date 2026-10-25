@@ -296,7 +296,7 @@ impl State {
             } => {
                 if self
                     .metadata
-                    .get_stream(current_database, DEFAULT_SCHEMA_NAME, &name)
+                    .get_stream(current_database, &name)
                     .await?
                     .is_some()
                 {
