@@ -1,4 +1,4 @@
-use crate::command::{Alter, Command};
+use crate::command::{Alter, Command, FormatAlter, StreamAlter};
 use crate::telemetry::Metrics;
 use crate::{CataError, Result};
 use lyra_meta::metadata::{DEFAULT_SCHEMA_NAME, Metadata, MetadataError, SYSTEM_DATABASE_NAME};
@@ -196,6 +196,10 @@ impl State {
                     } => "reset",
                     Command::Drop { force: true, .. } => "force_drop",
                     Command::Drop { .. } => "drop",
+                    Command::DropStream { .. } => "drop_stream",
+                    Command::DropFormat { .. } => "drop_format",
+                    Command::AlterStream { .. } => "alter_stream",
+                    Command::AlterFormat { .. } => "alter_format",
                     _ => return Err(CataError::sql("XX000", "invalid database operation")),
                 };
                 let started = Instant::now();
@@ -319,6 +323,80 @@ impl State {
                 value.format_name = format;
                 value.replication = replication;
                 self.metadata.create_stream(value).await?;
+                Ok(true)
+            }
+            Command::DropStream { name, if_exists } => {
+                let Some(record) = self.metadata.get_stream(current_database, &name).await? else {
+                    return if if_exists {
+                        Ok(false)
+                    } else {
+                        Err(MetadataError::NotFound.into())
+                    };
+                };
+                self.metadata
+                    .delete_stream(record.id(), record.version())
+                    .await?;
+                Ok(true)
+            }
+            Command::DropFormat { name, if_exists } => {
+                let Some(record) = self.metadata.get_format(current_database, &name).await? else {
+                    return if if_exists {
+                        Ok(false)
+                    } else {
+                        Err(MetadataError::NotFound.into())
+                    };
+                };
+                self.metadata
+                    .delete_format(record.id(), record.version())
+                    .await?;
+                Ok(true)
+            }
+            Command::AlterStream { name, action } => {
+                let record = self
+                    .metadata
+                    .get_stream(current_database, &name)
+                    .await?
+                    .ok_or(MetadataError::NotFound)?;
+                let mut value = record.value().clone();
+                match action {
+                    StreamAlter::Replication(replication) => {
+                        value.replication = Some(replication);
+                    }
+                    StreamAlter::Format(format_name) => {
+                        if self
+                            .metadata
+                            .get_format(current_database, &format_name)
+                            .await?
+                            .is_none()
+                        {
+                            return Err(CataError::sql("42704", "format does not exist"));
+                        }
+                        value.format_name = Some(format_name);
+                    }
+                }
+                self.metadata
+                    .update_stream(record.id(), value, record.version())
+                    .await?;
+                Ok(true)
+            }
+            Command::AlterFormat { name, action } => {
+                let record = self
+                    .metadata
+                    .get_format(current_database, &name)
+                    .await?
+                    .ok_or(MetadataError::NotFound)?;
+                let mut value = record.value().clone();
+                match action {
+                    FormatAlter::Definition(definition) => {
+                        value.definition = definition.as_bytes().to_vec().into();
+                    }
+                    FormatAlter::Type(format_type) => {
+                        value.format_type = format_type;
+                    }
+                }
+                self.metadata
+                    .update_format(record.id(), value, record.version())
+                    .await?;
                 Ok(true)
             }
             Command::Alter { name, action } => {
