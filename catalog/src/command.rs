@@ -37,12 +37,48 @@ pub(crate) enum Command {
         timeout: Duration,
     },
     Show {
+        kind: ShowKind,
         pattern: Option<String>,
+    },
+    DropStream {
+        name: String,
+        if_exists: bool,
+    },
+    DropFormat {
+        name: String,
+        if_exists: bool,
+    },
+    AlterStream {
+        name: String,
+        action: StreamAlter,
+    },
+    AlterFormat {
+        name: String,
+        action: FormatAlter,
     },
     Begin,
     Commit,
     Rollback,
     Query(String),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ShowKind {
+    Databases,
+    Streams,
+    Formats,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum StreamAlter {
+    Replication(u32),
+    Format(String),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum FormatAlter {
+    Definition(String),
+    Type(i32),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -258,6 +294,69 @@ impl Tokens {
             replication,
         })
     }
+    fn drop_stream(&mut self) -> Result<Command> {
+        let if_exists = self.word("IF");
+        if if_exists {
+            self.expect("EXISTS")?;
+        }
+        let name = self.name()?;
+        Ok(Command::DropStream { name, if_exists })
+    }
+    fn drop_format(&mut self) -> Result<Command> {
+        let if_exists = self.word("IF");
+        if if_exists {
+            self.expect("EXISTS")?;
+        }
+        let name = self.name()?;
+        Ok(Command::DropFormat { name, if_exists })
+    }
+    fn alter_stream(&mut self) -> Result<Command> {
+        let name = self.name()?;
+        self.expect("SET")?;
+        let action = if self.word("REPLICATION") {
+            self.consume(Token::Eq);
+            let value = self.literal()?.parse::<u32>().map_err(|_| invalid())?;
+            if value == 0 {
+                return Err(invalid());
+            }
+            StreamAlter::Replication(value)
+        } else if self.word("FORMAT") {
+            self.consume(Token::Eq);
+            StreamAlter::Format(self.name()?)
+        } else {
+            return Err(syntax());
+        };
+        Ok(Command::AlterStream { name, action })
+    }
+    fn alter_format(&mut self) -> Result<Command> {
+        let name = self.name()?;
+        self.expect("SET")?;
+        let action = if self.word("DEFINITION") {
+            self.consume(Token::Eq);
+            let definition = match self.next() {
+                Token::SingleQuotedString(value) => value,
+                _ => return Err(syntax()),
+            };
+            FormatAlter::Definition(definition)
+        } else if self.word("TYPE") {
+            self.consume(Token::Eq);
+            let format_type = match self.next() {
+                Token::Word(word) if word.quote_style.is_none() => {
+                    match word.value.to_ascii_uppercase().as_str() {
+                        "AVRO" => 0,
+                        "PROTOBUF" => 1,
+                        "JSON" => 2,
+                        _ => return Err(unsupported()),
+                    }
+                }
+                _ => return Err(syntax()),
+            };
+            FormatAlter::Type(format_type)
+        } else {
+            return Err(syntax());
+        };
+        Ok(Command::AlterFormat { name, action })
+    }
     fn command(&mut self) -> Result<Command> {
         if self.word("CREATE") {
             if self.word("FORMAT") {
@@ -281,6 +380,12 @@ impl Tokens {
             });
         }
         if self.word("ALTER") {
+            if self.word("STREAM") {
+                return self.alter_stream();
+            }
+            if self.word("FORMAT") {
+                return self.alter_format();
+            }
             self.expect("DATABASE").map_err(|_| unsupported())?;
             let name = self.name()?;
             let action = if self.word("RENAME") {
@@ -308,6 +413,12 @@ impl Tokens {
             return Ok(Command::Alter { name, action });
         }
         if self.word("DROP") {
+            if self.word("STREAM") {
+                return self.drop_stream();
+            }
+            if self.word("FORMAT") {
+                return self.drop_format();
+            }
             self.expect("DATABASE").map_err(|_| unsupported())?;
             let if_exists = self.word("IF");
             if if_exists {
@@ -361,7 +472,16 @@ impl Tokens {
                 timeout: timeout.unwrap_or(Duration::from_secs(30)),
             });
         }
-        if self.word("SHOW") && self.word("DATABASES") {
+        if self.word("SHOW") {
+            let kind = if self.word("DATABASES") {
+                ShowKind::Databases
+            } else if self.word("STREAMS") {
+                ShowKind::Streams
+            } else if self.word("FORMATS") {
+                ShowKind::Formats
+            } else {
+                return Err(syntax());
+            };
             let pattern = if self.word("LIKE") {
                 let Token::SingleQuotedString(value) = self.next() else {
                     return Err(syntax());
@@ -370,7 +490,7 @@ impl Tokens {
             } else {
                 None
             };
-            return Ok(Command::Show { pattern });
+            return Ok(Command::Show { kind, pattern });
         }
         self.offset = 0;
         if self.word("BEGIN") || (self.word("START") && self.word("TRANSACTION")) {
@@ -515,6 +635,14 @@ mod tests {
             "CREATE STREAM orders WITH format = order_fmt replication = 2",
             "CREATE STREAM events",
             "CREATE STREAM IF NOT EXISTS events WITH replication = 3",
+            "SHOW STREAMS",
+            "SHOW FORMATS LIKE 'o%'",
+            "DROP STREAM orders",
+            "DROP FORMAT IF EXISTS order_fmt",
+            "ALTER STREAM orders SET replication = 3",
+            "ALTER STREAM orders SET format = order_fmt",
+            "ALTER FORMAT order_fmt SET definition = '{}'",
+            "ALTER FORMAT order_fmt SET type = json",
         ] {
             assert!(parse(sql).is_ok(), "{sql}");
         }

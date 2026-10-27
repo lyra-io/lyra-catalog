@@ -88,19 +88,48 @@ impl Query {
                 client.set_transaction_status(TransactionStatus::Idle);
                 return Ok(Response::TransactionEnd(Tag::new("ROLLBACK")));
             }
-            Command::Show { pattern } => {
+            Command::Show { kind, pattern } => {
                 let started = Instant::now();
-                let result = self
-                    .state
-                    .metadata
-                    .list_databases()
-                    .await
-                    .map_err(CataError::from);
+                let result = match kind {
+                    command::ShowKind::Databases => self
+                        .state
+                        .metadata
+                        .list_databases()
+                        .await
+                        .map(|records| {
+                            records
+                                .into_iter()
+                                .map(|r| r.value().name.clone())
+                                .collect::<Vec<_>>()
+                        })
+                        .map_err(CataError::from),
+                    command::ShowKind::Streams => self
+                        .state
+                        .metadata
+                        .list_streams(current.admission.database_id)
+                        .await
+                        .map(|records| {
+                            records
+                                .into_iter()
+                                .map(|r| r.value().name.clone())
+                                .collect::<Vec<_>>()
+                        })
+                        .map_err(CataError::from),
+                    command::ShowKind::Formats => self
+                        .state
+                        .metadata
+                        .list_formats(current.admission.database_id)
+                        .await
+                        .map(|records| {
+                            records
+                                .into_iter()
+                                .map(|r| r.value().name.clone())
+                                .collect::<Vec<_>>()
+                        })
+                        .map_err(CataError::from),
+                };
                 self.state.metrics.operation("list", started, &result);
-                let mut names = result?
-                    .into_iter()
-                    .map(|r| r.value().name.clone())
-                    .collect::<Vec<_>>();
+                let mut names = result?;
                 if let Some(pattern) = pattern {
                     names.retain(|name| matches_like(name, &pattern));
                 }
@@ -120,7 +149,11 @@ impl Query {
             | Command::CreateFormat { .. }
             | Command::CreateStream { .. }
             | Command::Alter { .. }
-            | Command::Drop { .. }) => {
+            | Command::AlterStream { .. }
+            | Command::AlterFormat { .. }
+            | Command::Drop { .. }
+            | Command::DropStream { .. }
+            | Command::DropFormat { .. }) => {
                 if client.transaction_status() != TransactionStatus::Idle {
                     return Err(CataError::sql(
                         "25001",
@@ -133,6 +166,10 @@ impl Query {
                     Command::CreateFormat { .. } => ("CREATE FORMAT", "42P04"),
                     Command::CreateStream { .. } => ("CREATE STREAM", "42P04"),
                     Command::Alter { .. } => ("ALTER DATABASE", "00000"),
+                    Command::AlterStream { .. } => ("ALTER STREAM", "00000"),
+                    Command::AlterFormat { .. } => ("ALTER FORMAT", "00000"),
+                    Command::DropStream { .. } => ("DROP STREAM", "3D000"),
+                    Command::DropFormat { .. } => ("DROP FORMAT", "3D000"),
                     _ => ("DROP DATABASE", "3D000"),
                 };
                 if !self
