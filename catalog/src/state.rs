@@ -334,7 +334,7 @@ impl State {
                     };
                 };
                 self.metadata
-                    .delete_stream(record.id(), record.version())
+                    .delete_stream(current_database, &name, record.version())
                     .await?;
                 Ok(true)
             }
@@ -347,7 +347,7 @@ impl State {
                     };
                 };
                 self.metadata
-                    .delete_format(record.id(), record.version())
+                    .delete_format(current_database, &name, record.version())
                     .await?;
                 Ok(true)
             }
